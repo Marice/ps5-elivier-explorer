@@ -227,6 +227,20 @@ int LocalSource::copy_file(const std::string &from, const std::string &to, std::
     return error;
 }
 
+bool LocalSource::same_device(const std::string &a, const std::string &b) const
+{
+    struct stat first
+    {
+    };
+    struct stat second
+    {
+    };
+    // st_dev 0 is a real value on the console (a nullfs mount reported it), so a failed stat is
+    // what means "cannot tell", not a zero.
+    return ::stat(a.c_str(), &first) == 0 && ::stat(b.c_str(), &second) == 0 &&
+           first.st_dev == second.st_dev;
+}
+
 const void *LocalSource::kind_tag() const
 {
     return &kKindTag;

@@ -200,6 +200,13 @@ TEST_F(LocalSourceTest, CopyOfAnEmptyFileMakesAnEmptyFile)
     EXPECT_EQ(fs::file_size(root_ + "/copy.bin"), 0u);
 }
 
+TEST_F(LocalSourceTest, KnowsWhetherTwoPathsAreOnTheSameDevice)
+{
+    EXPECT_TRUE(source_.same_device(root_ + "/dir", root_ + "/dir/inner"));
+    EXPECT_FALSE(source_.same_device(root_ + "/dir", root_ + "/nowhere")); // cannot tell
+    EXPECT_FALSE(source_.same_device(root_ + "/nowhere", root_ + "/dir"));
+}
+
 TEST_F(LocalSourceTest, TwoLocalSourcesAreTheSameKind)
 {
     LocalSource other;

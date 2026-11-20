@@ -83,6 +83,10 @@ class Source
     virtual int copy_file(const std::string &from, const std::string &to, std::size_t chunk,
                           const ProgressFn &on_progress) = 0;
 
+    // Whether two paths are on the same device, so a rename between them moves instead of
+    // copying. False when either cannot be told (a missing path, a source without devices).
+    virtual bool same_device(const std::string &a, const std::string &b) const = 0;
+
     // Whether both are the same kind of source. Rename may do for a move only then, and only on
     // the same device as well (the engine checks that): two local drives are one kind of source.
     // No RTTI on the console, so each kind hands out the address of its own static tag.

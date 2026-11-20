@@ -16,9 +16,13 @@
 #include "explorer/pane_model.hpp"
 #include "explorer/trace.hpp"
 #include "ui/components/component.hpp"
+#include "ui/components/input_prompt.hpp"
+#include "ui/components/menu.hpp"
 #include "ui/components/split_view.hpp"
 #include "ui/components/table.hpp"
+#include "ui/components/toast.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -44,6 +48,7 @@ constexpr const char *kTechniques[] = {
     "Folders over 2000 entries show the first 2000, so the table stays quick",
     "The table only shows: sorting and the selection marks are the model's",
     "At a table's left or right edge the focus crosses to the other pane (SplitView)",
+    "Options opens a menu at the focused row; rename and new folder ask with the on-screen keyboard",
 };
 
 constexpr app::TourStep kTour[] = {
@@ -52,6 +57,10 @@ constexpr app::TourStep kTour[] = {
     {0.4f, 0, Direction::down, "files-moved"},
     {0.4f, 0, Direction::right, nullptr},
     {0.8f, 0, Direction::down, "files-right"},
+    {0.3f, action_bit(Action::menu), Direction::none, nullptr},
+    {0.7f, 0, Direction::none, "files-menu"},
+    {0.2f, action_bit(Action::back), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, nullptr},
 };
 
 constexpr float kHeaderHeight = 100.0f; // a pane's path and facts, above its table
@@ -80,6 +89,56 @@ const char *key_name(SortKey key)
     }
     return "";
 }
+
+// What an errno means to the player.
+const char *describe_error(int error)
+{
+    switch (error)
+    {
+    case EEXIST:
+        return "That name is already used here";
+    case EINVAL:
+        return "That is not a name a file can have";
+    case ENAMETOOLONG:
+        return "That name is too long";
+    case EACCES:
+    case EPERM:
+        return "No permission here";
+    case EROFS:
+        return "This drive is read-only";
+    case ENOSPC:
+        return "The drive is full";
+    case ENOENT:
+        return "It is not there any more";
+    default:
+        return "The console refused";
+    }
+}
+
+ui::MenuItem menu_item(const char *label, int tag, bool disabled = false)
+{
+    ui::MenuItem item;
+    item.label = label;
+    item.tag = tag;
+    item.disabled = disabled;
+    return item;
+}
+
+enum MenuTag
+{
+    kTagRename = 1,
+    kTagNewFolder,
+    kTagSelectAll,
+    kTagInvert,
+    kTagClear,
+};
+
+enum class PromptFor
+{
+    none,
+    rename,
+    new_folder,
+};
 
 // One side of the screen: the model and the table that shows it.
 class PaneView
@@ -135,15 +194,20 @@ class PaneView
     void refresh(bool replay_entrance)
     {
         table.set_rows(to_rows(model.state()));
-        // A mark is kept by row id, which a name in another folder shares: set every one again.
+        sync_marks();
+        table.set_focus(model.state().focus_index, true);
+        if (replay_entrance)
+            table.enter();
+    }
+
+    // A mark is kept by row id, which a name in another folder shares: set every one again.
+    void sync_marks()
+    {
         for (int row = 0; row < static_cast<int>(table.rows().size()); ++row)
         {
             const Entry *entry = entry_of_row(row);
             table.set_selected(row, entry != nullptr && model.is_selected(entry->name));
         }
-        table.set_focus(model.state().focus_index, true);
-        if (replay_entrance)
-            table.enter();
     }
 
     void sort_by(SortKey key, bool descending, app::Feedback &feedback)
@@ -274,6 +338,15 @@ class ExplorerScreen final : public app::Concept
         split_.set_focus(0, true);
         for (int i = 0; i < 2; ++i)
             panes_[i].layout(split_.pane_rect(i));
+        const Rect screen{0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight};
+        menu_.style.theme = theme();
+        menu_.set_bounds(screen);
+        prompt_.style.theme = theme();
+        prompt_.style.max_length = 128;
+        prompt_.keyboard.style.bindings = ui::KeyboardBindings::standard();
+        prompt_.set_bounds(screen);
+        toasts_.style.theme = theme();
+        toasts_.set_bounds(screen);
     }
 
     const app::ConceptInfo &info() const override
@@ -293,6 +366,8 @@ class ExplorerScreen final : public app::Concept
     void enter() override
     {
         age_ = 0.0f;
+        menu_.dismiss();
+        prompt_.dismiss();
         for (PaneView &pane : panes_)
             pane.table.enter();
     }
@@ -302,17 +377,39 @@ class ExplorerScreen final : public app::Concept
         clock_ += dt;
         age_ += dt;
         const int active = split_.focus() == 1 ? 1 : 0;
-        panes_[active].handle(input, feedback);
-        const ui::Event event = panes_[active].move(input, feedback);
-        // Past a table's edge: the focus crosses the split (or is refused where there is no pane).
-        if (event == ui::Event::none && panes_[active].table.exit() != Direction::none)
-            split_.handle_exit(panes_[active].table.exit(), input, feedback);
+        PaneView &pane = panes_[active];
+        if (prompt_.is_open())
+        {
+            // The prompt, then nothing else: it takes every input while it is open.
+            if (prompt_.handle(input, feedback) == ui::Event::activated)
+                prompt_done(active, feedback);
+        }
+        else if (menu_.is_open())
+        {
+            if (menu_.handle(input, feedback) == ui::Event::activated)
+                menu_chosen(active, menu_.items()[static_cast<std::size_t>(menu_.focus())].tag,
+                            feedback);
+        }
+        else
+        {
+            if (input.is_pressed(Action::menu))
+                open_menu(active, feedback);
+            else
+                pane.handle(input, feedback);
+            const ui::Event event = pane.move(input, feedback);
+            // Past a table's edge: the focus crosses the split (or is refused where there is no pane).
+            if (event == ui::Event::none && pane.table.exit() != Direction::none)
+                split_.handle_exit(pane.table.exit(), input, feedback);
+        }
         for (int i = 0; i < 2; ++i)
         {
             panes_[i].table.set_active(i == split_.focus());
             panes_[i].table.update(dt);
         }
         split_.update(dt);
+        menu_.update(dt);
+        prompt_.update(dt);
+        toasts_.update(dt, feedback);
     }
 
     void draw(app::Frame &frame) const override
@@ -330,10 +427,15 @@ class ExplorerScreen final : public app::Concept
             panes_[i].draw(paint, canvas);
             split_.end_pane(canvas, i);
         }
+        ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
+        menu_.draw(top);
+        prompt_.draw(top);
+        toasts_.draw(top);
         static constexpr ui::Hint kHints[] = {
             {ui::Button::cross, "Open"},
             {ui::Button::circle, "Up"},
             {ui::Button::triangle, "Mark"},
+            {ui::Button::options, "Menu"},
             {ui::Button::l2, "Sort", ui::Button::r2},
         };
         draw_hints(frame.scene, context_.fonts, look, kHints);
@@ -346,12 +448,101 @@ class ExplorerScreen final : public app::Concept
     }
 
   private:
+    void open_menu(int active, app::Feedback &feedback)
+    {
+        PaneView &pane = panes_[active];
+        const int row = pane.table.focus();
+        const bool has_row = pane.entry_of_row(row) != nullptr;
+        ui::MenuItem line;
+        line.separator = true;
+        menu_.set_items({menu_item("Rename", kTagRename, !has_row),
+                         menu_item("New folder", kTagNewFolder), line,
+                         menu_item("Select all", kTagSelectAll),
+                         menu_item("Invert selection", kTagInvert),
+                         menu_item("Clear selection", kTagClear,
+                                   pane.model.state().selected.empty())});
+        const Rect anchor = has_row ? pane.table.row_rect(row) : pane.table.bounds();
+        menu_.open(anchor, feedback);
+    }
+
+    void menu_chosen(int active, int tag, app::Feedback &feedback)
+    {
+        PaneView &pane = panes_[active];
+        switch (tag)
+        {
+        case kTagRename:
+            if (const Entry *entry = pane.entry_of_row(pane.table.focus()))
+            {
+                rename_target_ = entry->name;
+                prompt_for_ = PromptFor::rename;
+                prompt_.set_title("Rename");
+                prompt_.open(feedback, rename_target_);
+            }
+            break;
+        case kTagNewFolder:
+            prompt_for_ = PromptFor::new_folder;
+            prompt_.set_title("New folder");
+            prompt_.open(feedback, "");
+            break;
+        case kTagSelectAll:
+            pane.model.select_all();
+            pane.sync_marks();
+            break;
+        case kTagInvert:
+            pane.model.invert_selection();
+            pane.sync_marks();
+            break;
+        case kTagClear:
+            pane.model.clear_selection();
+            pane.sync_marks();
+            break;
+        default:
+            break;
+        }
+    }
+
+    // The prompt was answered: rename or make the folder, and say what happened.
+    void prompt_done(int active, app::Feedback &feedback)
+    {
+        (void)feedback;
+        PaneView &pane = panes_[active];
+        const std::string text = prompt_.text();
+        const PromptFor what = prompt_for_;
+        prompt_for_ = PromptFor::none;
+        if (what == PromptFor::none)
+            return;
+        const int error = what == PromptFor::rename ? pane.model.rename_entry(rename_target_, text)
+                                                     : pane.model.make_folder(text);
+        if (error != 0)
+        {
+            toasts_.push(ui::StatusKind::danger,
+                         what == PromptFor::rename ? "Could not rename" : "Could not make the folder",
+                         describe_error(error));
+            return;
+        }
+        pane.refresh(false);
+        // The other pane may show the same folder.
+        PaneView &other = panes_[1 - active];
+        if (other.model.state().path == pane.model.state().path)
+        {
+            other.model.reload();
+            other.refresh(false);
+        }
+        toasts_.push(ui::StatusKind::success, what == PromptFor::rename ? "Renamed" : "Folder made",
+                     text);
+    }
+
     app::Context &context_;
     float age_ = 0.0f;
     float clock_ = 0.0f;
     LocalSource source_;
     PaneView panes_[2];
     ui::SplitView split_;
+    ui::Menu menu_;
+    ui::InputPrompt prompt_;
+    ui::ToastStack toasts_;
+    PromptFor prompt_for_ = PromptFor::none;
+    std::string rename_target_;
 };
 
 } // namespace

@@ -190,6 +190,25 @@ int main(int argc, char **argv)
     for (const char *folder : {"/data", "/data/homebrew", "/user", "/mnt", "/mnt/usb0", "/system"})
         hui::save::ensure_directory(demo_root + folder);
     hui::concepts::set_probe_paths(demo_root, "");
+    // Something to browse: folders, files of every kind, sizes and dates.
+    const std::string browse = demo_root + "/data";
+    for (const char *folder : {"homebrew", "Roms", "saves", "etaHEN", "backups"})
+        hui::save::ensure_directory(browse + "/" + folder);
+    const struct
+    {
+        const char *name;
+        std::size_t size;
+    } samples[] = {{"autoload.txt", 92},     {"game10.ffpfsc", 40960}, {"game2.ffpfsc", 4096},
+                   {"notes.txt", 1536},      {"photo.png", 262144},    {"ps5-smbd.elf", 819200},
+                   {"README", 12},           {"track01.ogg", 3145728}, {"unknown.xyz", 700}};
+    for (const auto &sample : samples)
+        hui::save::write_atomic(browse + "/" + sample.name, std::string(sample.size, 'x'));
+    const std::string stick = demo_root + "/mnt/usb0";
+    for (const char *folder : {"Games", "Music", "Backups"})
+        hui::save::ensure_directory(stick + "/" + folder);
+    for (const char *name : {"movie.mkv", "setup.zip", "cover.jpg", "mix.mp3", "todo.md"})
+        hui::save::write_atomic(stick + "/" + name, std::string(5000, 'y'));
+    hui::concepts::set_explorer_start(browse, stick);
     hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
     hui::demo::Catalog catalog;
     if (!catalog.build_covers(renderer, fonts))

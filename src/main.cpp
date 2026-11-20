@@ -247,6 +247,7 @@ int main()
         sys::log("[HUI] sound rejected %s", error.c_str());
 
     hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
+    hui::concepts::set_explorer_start("/data", "/mnt");
     // probe.txt goes where a PC can read it over FTP: /data when the app sees it.
     hui::concepts::set_probe_paths("", save::ensure_directory("/data/elivier-explorer")
                                            ? "/data/elivier-explorer"

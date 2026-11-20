@@ -10,6 +10,7 @@ namespace hui::app
 std::span<const ConceptFactory> concept_registry()
 {
     static constexpr ConceptFactory kFactories[] = {
+        concepts::make_explorer,
         concepts::make_probe,
         concepts::make_support,
     };

@@ -289,7 +289,7 @@ void Shell::draw_chrome()
         ui::draw_hints(chrome_, fonts_, glyphs, hints, 2, left, false, layout);
         if (!version_.empty())
         {
-            std::snprintf(text, sizeof(text), "PayLoader %s, built on ps5-homebrew-ui",
+            std::snprintf(text, sizeof(text), "EliVier Explorer %s, built on ps5-homebrew-ui",
                           version_.c_str());
             ui::text(chrome_, fonts_.regular, text, left, 952, 18, white.with_alpha(0.4f));
         }

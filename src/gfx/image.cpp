@@ -1,4 +1,4 @@
-// PayLoader - A texture from a PNG file, decoded by the vendored stb_image.
+// EliVier Explorer - A texture from a PNG file, decoded by the vendored stb_image.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "gfx/image.hpp"

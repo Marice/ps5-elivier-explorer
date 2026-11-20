@@ -1,4 +1,4 @@
-# Build and preview environment for PayLoader: the kit's prerequisites (tools/doctor.sh) with LLVM 18,
+# Build and preview environment for EliVier Explorer: the kit's prerequisites (tools/doctor.sh) with LLVM 18,
 # and Mesa's EGL and GL for the off-screen preview (tools/host-snapshots.sh).
 # SPDX-License-Identifier: GPL-3.0-or-later
 FROM ubuntu:26.04

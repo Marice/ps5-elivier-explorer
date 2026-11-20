@@ -1,13 +1,13 @@
-// PayLoader - Screen "Support": a Ko-fi QR code, for those who like what PayLoader does.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// EliVier Explorer - Screen "Support": a Ko-fi QR code, for those who like what EliVier Explorer
+// does. SPDX-License-Identifier: GPL-3.0-or-later
 //
 // The code is a PNG in assets/support. The app hands this screen a loader for it (GL work, which
-// screens leave to the app; see set_support_qr), used once when the screen is first drawn. The
-// screen needs nothing from pldmgr, so it shows while pldmgr is away.
+// screens leave to the app; see set_support_qr), used once when the screen is first drawn.
 
 #include "concepts/concepts.hpp"
 
-#include "concepts/payloader/screen.hpp"
+#include "concepts/explorer/look.hpp"
+#include "core/tween.hpp"
 
 #include <string>
 
@@ -19,16 +19,14 @@ namespace
 
 using gfx::Color;
 using gfx::Rect;
-using namespace payloader;
-using hui::payloader::Topic;
-using hui::payloader::View;
+using namespace explorer;
 
 constexpr const char *kLink = "ko-fi.com/H5L629ZHNX";
 
 constexpr const char *kTechniques[] = {
     "The QR code is a PNG in the app's assets, decoded once with stb_image into a texture",
     "It leads to ko-fi.com/H5L629ZHNX; nothing is sent from the console",
-    "Needs nothing from pldmgr: it shows while pldmgr is away",
+    "Without the PNG the screen still shows the link as text",
 };
 
 constexpr app::TourStep kTour[] = {
@@ -39,10 +37,12 @@ constexpr app::TourStep kTour[] = {
 std::uint32_t (*g_load_png)(const std::string &path) = nullptr;
 std::string g_qr_path;
 
-class SupportScreen final : public Screen
+class SupportScreen final : public app::Concept
 {
   public:
-    using Screen::Screen;
+    explicit SupportScreen(app::Context &context) : context_(context)
+    {
+    }
 
     const app::ConceptInfo &info() const override
     {
@@ -51,52 +51,30 @@ class SupportScreen final : public Screen
             "Support",
             "Buy me a coffee or a beer",
             "src/concepts/support.cpp",
-            audio::SoundSet::paper,
-            Color::rgb(0xff5e5b),
+            audio::SoundSet::glass,
+            Color::rgb(0x1779ba),
             kTechniques,
         };
         return kInfo;
     }
 
-    std::span<const app::TourStep> tour() const override
+    void enter() override
     {
-        return kTour;
+        age_ = 0.0f;
     }
 
-  protected:
-    const char *title() const override
+    void update(const InputFrame & /*input*/, float dt, app::Feedback & /*feedback*/) override
     {
-        return "Support";
-    }
-    const char *summary() const override
-    {
-        return "Buy me a coffee or a beer";
-    }
-    std::span<const Topic> topics() const override
-    {
-        return {};
-    }
-    std::span<const ui::Hint> hints() const override
-    {
-        return {};
-    }
-    // A QR code and some text: shown with or without pldmgr.
-    bool usable(const View & /*view*/) const override
-    {
-        return true;
+        age_ += dt;
     }
 
-    void show(const View & /*view*/) override
+    void draw(app::Frame &frame) const override
     {
-    }
-
-    void activated(int /*id*/, app::Feedback & /*feedback*/) override
-    {
-    }
-
-    void draw_side(ui::Painter &paint) const override
-    {
-        const ui::Theme &look = paint.theme();
+        const ui::Theme &look = theme();
+        begin_frame(frame, look);
+        ui::Painter paint(frame.scene, context_.fonts, look);
+        frame.scene.push_opacity(tween::cubic_out(age_ / 0.3f));
+        draw_header(paint, "Support", "Buy me a coffee or a beer");
         if (!tried_)
         {
             tried_ = true;
@@ -106,14 +84,14 @@ class SupportScreen final : public Screen
         constexpr float kQrSize = 560.0f;
         const Rect qr{kMargin, kTop + 20.0f, kQrSize, kQrSize};
         if (texture_ != 0)
-            paint.list().image(texture_, qr, gfx::kFullUv, Color::rgb(0xffffff), 24.0f);
+            frame.scene.image(texture_, qr, gfx::kFullUv, Color::rgb(0xffffff), look.radius_card);
         else
-            paint.fill(qr, 24.0f, look.surface);
+            paint.fill(qr, look.radius_card, look.surface_high);
 
         const float x = kMargin + kQrSize + 80.0f;
         const float width = kRight - x;
         float y = kTop + 120.0f;
-        paint.heading("Enjoying PayLoader?", x, y, 56.0f, paint.page_text());
+        paint.heading("Enjoying EliVier Explorer?", x, y, 56.0f, paint.page_text());
         y += 80.0f;
         y = paragraph(paint,
                       "If you like what I make, you can buy me a coffee or a beer. Scan the code "
@@ -122,16 +100,25 @@ class SupportScreen final : public Screen
         y += 70.0f;
         paint.label("KO-FI", x, y, 20.0f, paint.page_text_muted());
         y += 52.0f;
-        paint.body(kLink, x, y, 34.0f, look.accent);
+        paint.body(kLink, x, y, 34.0f, look.primary);
         if (texture_ == 0)
         {
             y += 70.0f;
             paint.body("The code could not be loaded; the link above leads to the same page.", x, y,
                        22.0f, paint.page_text_muted());
         }
+        draw_hints(frame.scene, context_.fonts, look, std::span<const ui::Hint>());
+        frame.scene.pop_opacity();
+    }
+
+    std::span<const app::TourStep> tour() const override
+    {
+        return kTour;
     }
 
   private:
+    app::Context &context_;
+    float age_ = 0.0f;
     mutable bool tried_ = false;
     mutable std::uint32_t texture_ = 0;
 };

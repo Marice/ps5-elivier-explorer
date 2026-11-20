@@ -1,4 +1,4 @@
-// PayLoader - A texture from a PNG file.
+// EliVier Explorer - A texture from a PNG file.
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // GL work, so not for screens themselves: the app hands this to the screen that needs it (see

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PayLoader - Runs a command in the build container with the project mounted at the same path.
+# EliVier Explorer - Runs a command in the build container with the project mounted at the same path.
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)

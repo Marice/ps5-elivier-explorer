@@ -27,8 +27,8 @@ for file in "${repository_files[@]}"; do
     case "$file" in
         *.c|*.cc|*.cpp|*.h|*.hpp|*.ld|*.py|*.ps1|*.sh|*.yml|*.yaml|Makefile|.clang-format|.clang-tidy|.env.example)
             header=$(head -n 20 "$file")
-            # PayLoader's own files name the app; the kit's keep their author's line.
-            if ! grep -Fq 'PayLoader' <<<"$header"; then
+            # EliVier Explorer's own files name the app; the kit's keep their author's line.
+            if ! grep -Fq 'EliVier Explorer' <<<"$header"; then
                 grep -Eq 'ps5-homebrew-ui|ps5-native-app-boilerplate' <<<"$header"
                 grep -Fq 'Copyright (C) 2026 BlackBearReloaded' <<<"$header"
             fi
@@ -59,11 +59,11 @@ with open("sce_sys/param.json", encoding="utf-8") as source:
     param = json.load(source)
 title_id = param.get("titleId", "")
 content_id = param.get("contentId", "")
-if not re.fullmatch(r"PPSA\d{5}", title_id):
-    raise SystemExit("param.json titleId must use PPSA followed by five digits")
+if not re.fullmatch(r"(PPSA|LAPY)\d{5}", title_id):
+    raise SystemExit("param.json titleId must use PPSA or LAPY followed by five digits")
 if not re.fullmatch(r"\d{5}", param.get("conceptId", "")):
     raise SystemExit("param.json conceptId must contain five digits")
-if (not re.fullmatch(r"[A-Z]{2}\d{4}-PPSA\d{5}_00-[A-Z0-9]{16}", content_id)
+if (not re.fullmatch(r"[A-Z]{2}\d{4}-(PPSA|LAPY)\d{5}_00-[A-Z0-9]{16}", content_id)
         or title_id not in content_id):
     raise SystemExit("param.json contentId must be valid and contain titleId")
 if not re.fullmatch(r"\d{2}\.\d{3}\.\d{3}", param.get("contentVersion", "")):

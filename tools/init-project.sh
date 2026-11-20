@@ -30,8 +30,8 @@ app_name = os.environ.get("APP_NAME", "").strip()
 category = os.environ.get("APP_CATEGORY", "game").lower()
 suffix = os.environ.get("CONTENT_SUFFIX", "")
 
-if not re.fullmatch(r"PPSA\d{5}", title_id):
-    raise SystemExit("TITLE_ID must use PPSA followed by five digits")
+if not re.fullmatch(r"(PPSA|LAPY)\d{5}", title_id):
+    raise SystemExit("TITLE_ID must use PPSA or LAPY followed by five digits")
 if not app_name or any(character in app_name for character in "\r\n"):
     raise SystemExit("APP_NAME must be a non-empty, single-line title")
 if category not in {"game", "media"}:

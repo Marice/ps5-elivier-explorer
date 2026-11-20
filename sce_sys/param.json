@@ -12,10 +12,10 @@
   "attribute": 1644167168,
   "attribute2": 0,
   "attribute3": 1048576,
-  "conceptId": "67670",
+  "conceptId": "69432",
   "contentBadgeType": 1,
-  "contentId": "UP9000-PPSA67670_00-PAYLOADER0000000",
-  "contentVersion": "00.001.003",
+  "contentId": "UP9000-LAPY69432_00-ELIVIEREXPLORER0",
+  "contentVersion": "00.001.000",
   "downloadDataSize": 256,
   "gameIntent": {
     "permittedIntents": [
@@ -31,7 +31,7 @@
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "PayLoader"
+      "titleName": "EliVier Explorer"
     }
   },
   "masterVersion": "01.00",
@@ -42,6 +42,6 @@
   },
   "requiredSystemSoftwareVersion": "0x0000000000000000",
   "sdkVersion": "0x0000000000000000",
-  "titleId": "PPSA67670",
+  "titleId": "LAPY69432",
   "versionFileUri": ""
 }

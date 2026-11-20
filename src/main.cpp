@@ -7,7 +7,6 @@
 // markers and frame pacing are logged for hardware runs.
 
 #include "app/shell.hpp"
-#include "payloader/launcher.hpp"
 #include "app/tour.hpp"
 #include "audio/cues.hpp"
 #include "audio/mixer.hpp"
@@ -18,12 +17,16 @@
 #include "core/settings.hpp"
 #include "core/version.hpp"
 #include "demo/catalog.hpp"
+#include "explorer/access_report.hpp"
+#include "explorer/trace.hpp"
 #include "concepts/concepts.hpp"
 #include "gfx/canvas.hpp"
 #include "gfx/image.hpp"
 #include "gfx/renderer.hpp"
 #include "platform/ps5/audio_out.hpp"
+#include "platform/ps5/crash.hpp"
 #include "platform/ps5/display_egl.hpp"
+#include "platform/ps5/hen_access.hpp"
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/system.hpp"
 #include "ui/fonts.hpp"
@@ -45,7 +48,11 @@ extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
 namespace
 {
 
-constexpr const char *kAssets = "/app0/assets";
+// The app's own files. A HEN that frees the app with the console's root takes /app0 away; the
+// install folder holds the same files then.
+constexpr const char *kAppFolder = "/app0";
+constexpr const char *kInstallFolder = "/data/homebrew/LAPY69432";
+std::string g_app_folder = kAppFolder;
 // Settings live in the title's own save area.
 constexpr const char *kDataRoot = "/download0/hui";
 // Development output (the tour's pictures and report, the log). A title's
@@ -57,7 +64,7 @@ constexpr const char *kDevRoot = "/download0/hui/dev";
 // write: /data/homebrew/<TITLE_ID>/dev/request.txt is /app0/dev/request.txt
 // here. One line: "tour <design id|all> <token>" or "quit - <token>". A
 // request is honoured once per token (the last one is remembered in kDevRoot).
-constexpr const char *kRequestPath = "/app0/dev/request.txt";
+constexpr const char *kRequestFile = "/dev/request.txt";
 // How long a finished tour stays up so the PC can copy its evidence (the
 // storage is unmounted when the title closes) before the app closes itself.
 constexpr double kCollectSeconds = 240.0;
@@ -99,7 +106,7 @@ bool load_font(hui::gfx::Renderer &renderer, const char *name, hui::gfx::Font *f
                hui::ui::FontRef *ref)
 {
     std::string data;
-    const std::string path = std::string(kAssets) + "/fonts/" + name;
+    const std::string path = g_app_folder + "/assets/fonts/" + name;
     if (!hui::save::read_file(path, &data) || !font->load(data))
     {
         hui::sys::log("[HUI] font %s failed: %s", name, font->error().c_str());
@@ -156,17 +163,40 @@ int main()
 {
     using namespace hui;
     sys::log("[HUI] entry");
+    // The trace first: /data is there with etaHEN's "Allow /data in sandbox"; the app's own
+    // storage is the fallback (a PC cannot read it once the title has closed).
+    static const char *const kTraceFolders[] = {"/data/elivier-explorer", "/download0/hui"};
+    explorer::trace_open(kTraceFolders);
+    ps5::catch_crashes(reinterpret_cast<const void *>(&open_display));
+    explorer::trace("entry; trace in %s", explorer::trace_path());
+    // Out of the sandbox before anything else: the HEN must see one thread, and every file the
+    // app reads afterwards may live elsewhere.
+    ps5::hen_prepare();
+    explorer::trace("asking the HEN to free the app");
+    explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);
+    sys::log("[EXPLORER] access %s in %d ms, uid %d to %d, /app0 %d",
+             explorer::route_name(access.route), access.milliseconds, access.uid_before,
+             access.uid_after, access.app_folder ? 1 : 0);
+    if (!access.app_folder && !access.root_put_back)
+        g_app_folder = kInstallFolder;
+    explorer::trace("access %s, /app0 %d; app files from %s", explorer::route_name(access.route),
+                    access.app_folder ? 1 : 0, g_app_folder.c_str());
+    explorer::set_access_report(std::move(access));
+    const std::string assets = g_app_folder + "/assets";
     sys::log("[HUI] storage dir=%d", save::ensure_directory(kDataRoot) ? 1 : 0);
 
     // The display opens at the saved resolution (1080p if that fails).
     const Settings saved = app::Shell::load_settings(kDataRoot);
     int resolution = ps5::Display::supports_display_modes() ? saved.resolution : 0;
     ps5::Display display;
+    explorer::trace("opening the display (mode %d)", resolution);
     if (!open_display(display, &resolution))
     {
         sys::log("[HUI] fatal: display open failed");
+        explorer::trace("FATAL: display open failed");
         sys::park();
     }
+    explorer::trace("display open %dx%d", display.width(), display.height());
 
     gfx::Renderer renderer;
     gfx::Font regular;
@@ -176,6 +206,7 @@ int main()
     gfx::Font pixel;
     gfx::Font hand;
     ui::Fonts fonts;
+    explorer::trace("renderer and fonts");
     if (!renderer.init() ||
         !load_font(renderer, "inter-regular.huifont", &regular, &fonts.regular) ||
         !load_font(renderer, "inter-semibold.huifont", &semibold, &fonts.semibold) ||
@@ -185,8 +216,11 @@ int main()
         !load_font(renderer, "patrick-hand.huifont", &hand, &fonts.hand))
     {
         sys::log("[HUI] fatal: renderer init failed");
+        explorer::trace("FATAL: renderer init or a font failed (fonts from %s)",
+                        g_app_folder.c_str());
         sys::park();
     }
+    explorer::trace("fonts loaded; cover art");
     demo::Catalog catalog;
     const std::int64_t art_start = sys::monotonic_us();
     if (!catalog.build_covers(renderer, fonts))
@@ -194,28 +228,32 @@ int main()
     sys::log("[HUI] cover art %zu covers in %lld ms", catalog.size(),
              static_cast<long long>((sys::monotonic_us() - art_start) / 1000));
 
+    explorer::trace("pad and audio");
     ps5::Pad pad;
     pad.open();
     InputTracker tracker;
     audio::Mixer mixer;
     // The music stream attaches to the mixer before the audio thread starts.
     audio::MusicPlayer music;
-    const int tracks = music.init(mixer, std::string(kAssets) + "/audio/music",
-                                  static_cast<std::uint64_t>(sys::monotonic_us()));
+    const int tracks =
+        music.init(mixer, assets + "/audio/music", static_cast<std::uint64_t>(sys::monotonic_us()));
     sys::log("[HUI] music songs=%d", tracks);
     ps5::AudioOut audio_out;
     audio_out.start(mixer);
     audio::SoundBank sounds;
-    const auto bank = sounds.load(std::string(kAssets) + "/audio/sfx");
+    const auto bank = sounds.load(assets + "/audio/sfx");
     sys::log("[HUI] sounds files=%d rejected=%d", bank.files, bank.rejected);
     for (const std::string &error : bank.errors)
         sys::log("[HUI] sound rejected %s", error.c_str());
 
-    hui::payloader::set_payloader_paths(kAssets, kDataRoot);
-    hui::concepts::set_support_qr(hui::gfx::load_png_texture,
-                                  std::string(kAssets) + "/support/ko-fi-qr.png");
+    hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
+    // probe.txt goes where a PC can read it over FTP: /data when the app sees it.
+    hui::concepts::set_probe_paths("", save::ensure_directory("/data/elivier-explorer")
+                                           ? "/data/elivier-explorer"
+                                           : std::string(kDataRoot) + "/probe");
+    explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
-    const std::string version = read_content_version("/app0/sce_sys/param.json");
+    const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");
     shell.set_version(version);
     sys::log("[HUI] version %s designs=%zu", version.empty() ? "unknown" : version.c_str(),
              shell.concept_count());
@@ -231,7 +269,7 @@ int main()
     const auto poll_request = [&]()
     {
         std::string request;
-        if (!save::read_file(kRequestPath, &request, 256))
+        if (!save::read_file(g_app_folder + kRequestFile, &request, 256))
             return;
         char verb[16] = {};
         char argument[64] = {};
@@ -259,6 +297,7 @@ int main()
     poll_request();
     double collect_wait = -1.0; // seconds a finished tour has waited to be collected
 
+    explorer::trace("first frame");
     std::int64_t previous = sys::monotonic_us();
     std::uint64_t frames = 0;
     FrameStats stats;
@@ -284,6 +323,8 @@ int main()
             input = tour->step(dt);
 
         shell.update(input, dt);
+        if (frames == 0)
+            explorer::trace("frame 1: updated");
         if (shell.take_settings_changed())
         {
             const Settings &settings = shell.settings();
@@ -315,10 +356,14 @@ int main()
         music.pump(dt);
 
         shell.compose(renderer);
+        if (frames == 0)
+            explorer::trace("frame 1: composed");
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         renderer.present(0, display.width(), display.height());
+        if (frames == 0)
+            explorer::trace("frame 1: presented");
         if (tour && !tour->capture().empty())
         {
             // The picture is the same frame drawn once more into a small
@@ -353,6 +398,7 @@ int main()
         {
             sys::log("[HUI] first-swap ok shapes=%zu draws=%zu", renderer.last_instances(),
                      renderer.last_draw_calls());
+            explorer::trace("first swap ok");
             const bool hidden = sys::hide_splash_screen();
             sys::log("[HUI] ready splash_hidden=%d", hidden ? 1 : 0);
             log_heap(frames);

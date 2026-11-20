@@ -20,8 +20,6 @@
 #include "app/tour.hpp"
 #include "core/save_file.hpp"
 #include "demo/catalog.hpp"
-#include "payloader/demo.hpp"
-#include "payloader/store.hpp"
 #include "concepts/concepts.hpp"
 #include "gfx/gl_program.hpp"
 #include "gfx/image.hpp"
@@ -185,112 +183,19 @@ int main(int argc, char **argv)
         !load_font(renderer, assets + "/fonts/press-start-2p.huifont", &pixel, &fonts.pixel) ||
         !load_font(renderer, assets + "/fonts/patrick-hand.huifont", &hand, &fonts.hand))
         return 1;
-    // PayLoader: a pretend pldmgr, so the screens have content; PAYLOADER_OFFLINE=1 shows
-    // them without one.
-    // A pretend /data with ps5-autoloader's list, so the Autoload screen shows the boot chain.
-    const std::string demo_root = std::string(argv[2]) + "/.payloader-root";
+    // A pretend console for the Probe screen: internal storage, one USB drive, /user.
+    const std::string demo_root = std::string(argv[2]) + "/.explorer-root";
     hui::save::ensure_directory(argv[2]);
     hui::save::ensure_directory(demo_root);
-    hui::save::ensure_directory(demo_root + "/data");
-    hui::save::ensure_directory(demo_root + "/data/ps5_autoloader");
-    hui::save::write_atomic(demo_root + "/data/ps5_autoloader/autoload.txt",
-                            "websrv.elf\n!3000\netaHEN.elf\n!12000\npackage-helper.elf\n!3000\n"
-                            "ps5-exporter.elf\n!3000\nps5-signal.elf\n");
-    for (const char *file : {"websrv.elf", "etaHEN.elf", "package-helper.elf", "ps5-exporter.elf",
-                             "ps5-signal.elf", "ftpsrv.elf"})
-        hui::save::write_atomic(demo_root + "/data/ps5_autoloader/" + file, "ELF");
-    if (std::getenv("PAYLOADER_OFFLINE") == nullptr)
-        hui::payloader::install_store([] { return hui::payloader::make_demo_transport(); },
-                                      demo_root);
+    for (const char *folder : {"/data", "/data/homebrew", "/user", "/mnt", "/mnt/usb0", "/system"})
+        hui::save::ensure_directory(demo_root + folder);
+    hui::concepts::set_probe_paths(demo_root, "");
     hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
     hui::demo::Catalog catalog;
     if (!catalog.build_covers(renderer, fonts))
     {
         std::fprintf(stderr, "cover art failed\n");
         return 1;
-    }
-
-    // HUI_ICON=<file.png>: draw PayLoader's 512x512 launcher icon with the kit and stop.
-    // PAYLOADER_BACKGROUND=<file.png>: the same art at 1920x1080, for pic0 and pic1.
-    const char *icon_path = std::getenv("HUI_ICON");
-    const char *background_path = std::getenv("PAYLOADER_BACKGROUND");
-    if (icon_path != nullptr || background_path != nullptr)
-    {
-        const bool icon = icon_path != nullptr;
-        const int art_w = icon ? 512 : 1920;
-        const int art_h = icon ? 512 : 1080;
-        GLuint target = 0;
-        GLuint storage = 0;
-        glGenFramebuffers(1, &target);
-        glGenRenderbuffers(1, &storage);
-        glBindRenderbuffer(GL_RENDERBUFFER, storage);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, art_w, art_h);
-        glBindFramebuffer(GL_FRAMEBUFFER, target);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, storage);
-        using hui::gfx::Color;
-        // Candy's pastel bokeh, the app's own theme.
-        hui::gfx::BackdropSpec spec;
-        spec.mode = hui::gfx::BackdropMode::bokeh;
-        spec.colors[0] = Color::rgb(0xffe3f0);
-        spec.colors[1] = Color::rgb(0xe6f0ff);
-        spec.colors[2] = Color::rgb(0xffb3d1);
-        spec.colors[3] = Color::rgb(0x9fdcff);
-        spec.time = 42.0f;
-        const Color ink = Color::rgb(0x5a3a5f);
-        const Color pink = Color::rgb(0xff6fae);
-        const Color blue = Color::rgb(0x57c8ff);
-        hui::gfx::DrawList list;
-        // Three payload cards, fanned; a round pink button with an arrow drops into them.
-        const float s = icon ? 1.0f : 1.35f;
-        const float cx = icon ? 256.0f : 960.0f;
-        const float cy = icon ? 214.0f : 430.0f;
-        const auto card = [&](float dx, float dy, float angle, Color fill)
-        {
-            const hui::gfx::Rect r{cx - 150 * s + dx * s, cy - 10 * s + dy * s, 300 * s, 120 * s};
-            list.shadow(r, 34 * s, 30 * s, Color::rgb(0xff7fb6, 0.35f));
-            list.rotated_rect(r, 34 * s, angle, fill);
-        };
-        card(-34, 34, -0.16f, Color::rgb(0xd9ecff));
-        card(34, 30, 0.14f, Color::rgb(0xffd3e6));
-        card(0, 18, 0.0f, Color::rgb(0xffffff));
-        list.rounded_rect({cx - 112 * s, cy + 46 * s, 120 * s, 16 * s}, 8 * s,
-                          ink.with_alpha(0.8f));
-        list.rounded_rect({cx - 112 * s, cy + 78 * s, 180 * s, 12 * s}, 6 * s,
-                          ink.with_alpha(0.3f));
-        list.circle(cx + 96 * s, cy + 66 * s, 9 * s, blue);
-        const float bx = cx;
-        const float by = cy - 64 * s;
-        list.glow({bx - 70 * s, by - 70 * s, 140 * s, 140 * s}, 70 * s, 26 * s,
-                  pink.with_alpha(0.5f));
-        list.circle(bx, by, 70 * s, pink);
-        list.rounded_rect({bx - 10 * s, by - 40 * s, 20 * s, 58 * s}, 10 * s, Color::rgb(0xffffff));
-        list.line(bx - 30 * s, by + 4 * s, bx, by + 34 * s, 20 * s, Color::rgb(0xffffff));
-        list.line(bx + 30 * s, by + 4 * s, bx, by + 34 * s, 20 * s, Color::rgb(0xffffff));
-        list.circle(bx, by + 32 * s, 10 * s, Color::rgb(0xffffff));
-        if (icon)
-        {
-            hui::ui::text(list, fonts.display, "PayLoader", 256, 452, 74, ink,
-                          hui::gfx::Align::center);
-        }
-        else
-        {
-            hui::ui::text(list, fonts.display, "PayLoader", 960, 800, 120, ink,
-                          hui::gfx::Align::center);
-            hui::ui::text(list, fonts.semibold, "PAYLOADS FROM YOUR CONTROLLER", 960, 870, 30, pink,
-                          hui::gfx::Align::center, 8.0f);
-        }
-        renderer.begin();
-        renderer.backdrop(spec);
-        renderer.draw(list);
-        renderer.present(target, art_w, art_h, static_cast<float>(art_w),
-                         static_cast<float>(art_h));
-        std::vector<unsigned char> art(static_cast<std::size_t>(art_w * art_h * 4));
-        glReadPixels(0, 0, art_w, art_h, GL_RGBA, GL_UNSIGNED_BYTE, art.data());
-        for (std::size_t i = 3; i < art.size(); i += 4)
-            art[i] = 255;
-        stbi_flip_vertically_on_write(1);
-        const char *path = icon ? icon_path : background_path;
-        return stbi_write_png(path, art_w, art_h, 4, art.data(), art_w * 4) != 0 ? 0 : 1;
     }
 
     GLuint framebuffer = 0;

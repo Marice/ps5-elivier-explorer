@@ -40,7 +40,8 @@ EntryKind kind_of(mode_t mode)
 void fill(Entry *entry, const struct stat &info)
 {
     entry->kind = kind_of(info.st_mode);
-    entry->size = entry->kind == EntryKind::directory ? 0 : static_cast<std::uint64_t>(info.st_size);
+    entry->size =
+        entry->kind == EntryKind::directory ? 0 : static_cast<std::uint64_t>(info.st_size);
     entry->modified_unix = static_cast<std::int64_t>(info.st_mtime);
 }
 

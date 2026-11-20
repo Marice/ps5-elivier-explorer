@@ -154,13 +154,12 @@ TEST_F(LocalSourceTest, CopiesAcrossChunkBoundariesAndReportsProgress)
         data[i] = static_cast<char>(i * 7 + 3);
     write_file(root_ + "/big.bin", data);
     std::vector<std::uint64_t> seen;
-    const int result =
-        source_.copy_file(root_ + "/big.bin", root_ + "/copy.bin", 4096,
-                          [&seen](std::uint64_t copied)
-                          {
-                              seen.push_back(copied);
-                              return true;
-                          });
+    const int result = source_.copy_file(root_ + "/big.bin", root_ + "/copy.bin", 4096,
+                                         [&seen](std::uint64_t copied)
+                                         {
+                                             seen.push_back(copied);
+                                             return true;
+                                         });
     EXPECT_EQ(result, 0);
     EXPECT_EQ(read_all(root_ + "/copy.bin"), data);
     EXPECT_EQ(fs::status(root_ + "/copy.bin").permissions() & fs::perms::all, fs::perms(0666));

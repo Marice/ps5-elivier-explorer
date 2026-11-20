@@ -167,7 +167,8 @@ TEST_F(PaneModelTest, ReloadPicksUpChangesAndDropsVanishedSelections)
     fs::remove(root_ + "/file2.txt");
     pane.reload();
     EXPECT_EQ(pane.state().total_entries, 6);
-    EXPECT_NE(std::find(names_of(pane).begin(), names_of(pane).end(), "new.txt"), names_of(pane).end());
+    EXPECT_NE(std::find(names_of(pane).begin(), names_of(pane).end(), "new.txt"),
+              names_of(pane).end());
     EXPECT_FALSE(pane.is_selected("file2.txt"));
     EXPECT_TRUE(pane.is_selected("zero.bin"));
 }
@@ -226,6 +227,15 @@ TEST_F(PaneModelTest, MakesAFolderAndRenamesWithTheFocusFollowing)
     EXPECT_EQ(pane.rename_entry("delta", "a/b"), EINVAL);  // a name, not a path
     EXPECT_EQ(pane.make_folder(""), EINVAL);
     EXPECT_EQ(pane.make_folder(".."), EINVAL);
+}
+
+TEST_F(PaneModelTest, AProtectedFolderCanBeBrowsedButNotChanged)
+{
+    PaneModel pane(source_);
+    ASSERT_TRUE(pane.go_to("/dev")); // exists on any host, and is protected
+    EXPECT_EQ(pane.make_folder("elivier-test"), EPERM);
+    ASSERT_FALSE(pane.state().entries.empty());
+    EXPECT_EQ(pane.rename_entry(pane.state().entries[0].name, "elivier-test"), EPERM);
 }
 
 TEST_F(PaneModelTest, EntryKindsAreKept)

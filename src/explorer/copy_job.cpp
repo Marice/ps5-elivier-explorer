@@ -3,6 +3,7 @@
 
 #include "explorer/copy_job.hpp"
 
+#include "explorer/guard.hpp"
 #include "explorer/path.hpp"
 #include "explorer/trace.hpp"
 
@@ -45,11 +46,19 @@ class Engine
             progress_->kind = plan_.kind;
         }
         trace("job: %s %zu name(s) %s -> %s",
-              plan_.kind == JobKind::copy ? "copy" : (plan_.kind == JobKind::move ? "move" : "delete"),
+              plan_.kind == JobKind::copy ? "copy"
+                                          : (plan_.kind == JobKind::move ? "move" : "delete"),
               plan_.names.size(), plan_.from_dir.c_str(), plan_.to_dir.c_str());
         if (plan_.kind != JobKind::remove && !from_.same_kind(to_))
         {
             fail(ENOTSUP, plan_.to_dir);
+            fatal_ = true;
+        }
+        // Reading and copying from a protected folder is fine; changing one is not (guard.hpp).
+        if ((plan_.kind != JobKind::copy && is_protected_folder(plan_.from_dir)) ||
+            (plan_.kind != JobKind::remove && is_protected_folder(plan_.to_dir)))
+        {
+            fail(EPERM, is_protected_folder(plan_.from_dir) ? plan_.from_dir : plan_.to_dir);
             fatal_ = true;
         }
         move_fast_ = plan_.kind == JobKind::move && from_.same_kind(to_) &&
@@ -58,7 +67,8 @@ class Engine
         for (const std::string &name : plan_.names)
         {
             Entry entry;
-            if (from_.stat(path_join(plan_.from_dir, name), &entry) && entry.kind == EntryKind::file)
+            if (from_.stat(path_join(plan_.from_dir, name), &entry) &&
+                entry.kind == EntryKind::file)
                 add_total(1, entry.size);
         }
         for (const std::string &name : plan_.names)
@@ -71,8 +81,9 @@ class Engine
         if (progress_->state != JobState::cancelled)
             progress_->state = fatal_ ? JobState::failed : JobState::done;
         progress_->current_name.clear();
-        trace("job: end, state %d, %d done, %d skipped, %d failed", static_cast<int>(progress_->state),
-              progress_->files_done, progress_->skipped, progress_->failed);
+        trace("job: end, state %d, %d done, %d skipped, %d failed",
+              static_cast<int>(progress_->state), progress_->files_done, progress_->skipped,
+              progress_->failed);
     }
 
   private:
@@ -206,7 +217,8 @@ class Engine
         bool merge = false;
         if (exists)
         {
-            if (entry.kind == EntryKind::directory && there.kind == EntryKind::directory && !same_dir)
+            if (entry.kind == EntryKind::directory && there.kind == EntryKind::directory &&
+                !same_dir)
             {
                 merge = true; // folders join; what is inside is judged name by name
             }
@@ -225,13 +237,15 @@ class Engine
                 {
                     if (there.kind == EntryKind::directory || entry.kind == EntryKind::directory)
                     {
-                        fail(EEXIST, dst); // a folder is never replaced by a file, nor a file by one
+                        fail(EEXIST,
+                             dst); // a folder is never replaced by a file, nor a file by one
                         return;
                     }
                 }
                 else // rename
                 {
-                    const std::string fresh = free_name(dst_dir, name, entry.kind == EntryKind::directory);
+                    const std::string fresh =
+                        free_name(dst_dir, name, entry.kind == EntryKind::directory);
                     if (fresh.empty())
                     {
                         fail(EEXIST, dst);
@@ -320,15 +334,14 @@ class Engine
         }
         const std::string part = dst + kPartSuffix;
         std::uint64_t last = 0;
-        int error = to_.copy_file(
-            src, part, chunk_,
-            [this, &last](std::uint64_t copied)
-            {
-                std::lock_guard<std::mutex> lock(*mutex_);
-                progress_->bytes_done += copied - last;
-                last = copied;
-                return progress_->state != JobState::cancelled;
-            });
+        int error = to_.copy_file(src, part, chunk_,
+                                  [this, &last](std::uint64_t copied)
+                                  {
+                                      std::lock_guard<std::mutex> lock(*mutex_);
+                                      progress_->bytes_done += copied - last;
+                                      last = copied;
+                                      return progress_->state != JobState::cancelled;
+                                  });
         if (error != 0)
         {
             {

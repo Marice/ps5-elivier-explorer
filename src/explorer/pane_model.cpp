@@ -3,6 +3,7 @@
 
 #include "explorer/pane_model.hpp"
 
+#include "explorer/guard.hpp"
 #include "explorer/trace.hpp"
 
 #include <algorithm>
@@ -163,7 +164,8 @@ void PaneModel::sort_entries(std::vector<Entry> *entries) const
                       c = -c;
                   if (c != 0)
                       return c < 0;
-                  // Ties always fall back to the name, ascending, so the order is the same each time.
+                  // Ties always fall back to the name, ascending, so the order is the same each
+                  // time.
                   c = natural_compare(a.name, b.name);
                   if (c != 0)
                       return c < 0;
@@ -313,8 +315,7 @@ const Entry *PaneModel::entry_at(int index) const
 
 bool PaneModel::is_selected(std::string_view name) const
 {
-    return std::find(state_.selected.begin(), state_.selected.end(), name) !=
-           state_.selected.end();
+    return std::find(state_.selected.begin(), state_.selected.end(), name) != state_.selected.end();
 }
 
 void PaneModel::toggle_selected(const std::string &name)
@@ -356,6 +357,8 @@ int PaneModel::make_folder(const std::string &name)
 {
     if (const int bad = check_name(name))
         return bad;
+    if (is_protected_folder(state_.path))
+        return EPERM;
     const std::string path = join(state_.path, name);
     Entry existing;
     if (source_.stat(path, &existing))
@@ -375,6 +378,8 @@ int PaneModel::rename_entry(const std::string &from, const std::string &to)
         return bad;
     if (from == to)
         return 0;
+    if (is_protected_folder(state_.path))
+        return EPERM;
     const std::string target = join(state_.path, to);
     Entry existing;
     if (source_.stat(target, &existing))

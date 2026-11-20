@@ -12,12 +12,18 @@
 #include "concepts/explorer/look.hpp"
 #include "concepts/explorer/row_format.hpp"
 #include "core/tween.hpp"
+#include "explorer/copy_job.hpp"
+#include "explorer/guard.hpp"
 #include "explorer/local_source.hpp"
 #include "explorer/pane_model.hpp"
 #include "explorer/trace.hpp"
+#include "explorer/worker.hpp"
 #include "ui/components/component.hpp"
+#include "ui/components/dialog.hpp"
+#include "ui/components/hold_button.hpp"
 #include "ui/components/input_prompt.hpp"
 #include "ui/components/menu.hpp"
+#include "ui/components/progress.hpp"
 #include "ui/components/split_view.hpp"
 #include "ui/components/table.hpp"
 #include "ui/components/toast.hpp"
@@ -36,8 +42,14 @@ namespace
 using gfx::Color;
 using gfx::Rect;
 using namespace explorer;
+using hui::explorer::ConflictPolicy;
+using hui::explorer::CopyPlan;
+using hui::explorer::CopyProgress;
 using hui::explorer::Entry;
 using hui::explorer::EntryKind;
+using hui::explorer::JobKind;
+using hui::explorer::JobShared;
+using hui::explorer::JobState;
 using hui::explorer::LocalSource;
 using hui::explorer::PaneModel;
 using hui::explorer::PaneState;
@@ -48,7 +60,9 @@ constexpr const char *kTechniques[] = {
     "Folders over 2000 entries show the first 2000, so the table stays quick",
     "The table only shows: sorting and the selection marks are the model's",
     "At a table's left or right edge the focus crosses to the other pane (SplitView)",
-    "Options opens a menu at the focused row; rename and new folder ask with the on-screen keyboard",
+    "Options opens a menu at the focused row; names are asked with the on-screen keyboard",
+    "Copy, move and delete run on a worker thread; progress is polled, never waited for",
+    "Delete and cancel are hold-to-confirm; a name that is already there is asked about",
 };
 
 constexpr app::TourStep kTour[] = {
@@ -59,6 +73,16 @@ constexpr app::TourStep kTour[] = {
     {0.8f, 0, Direction::down, "files-right"},
     {0.3f, action_bit(Action::menu), Direction::none, nullptr},
     {0.7f, 0, Direction::none, "files-menu"},
+    // Down to Delete, which only asks: holding Cross is what deletes, and the tour never holds.
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.12f, 0, Direction::down, nullptr},
+    {0.2f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.8f, 0, Direction::none, "files-delete"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
 };
@@ -101,8 +125,9 @@ const char *describe_error(int error)
         return "That is not a name a file can have";
     case ENAMETOOLONG:
         return "That name is too long";
-    case EACCES:
     case EPERM:
+        return "That folder is protected";
+    case EACCES:
         return "No permission here";
     case EROFS:
         return "This drive is read-only";
@@ -126,7 +151,10 @@ ui::MenuItem menu_item(const char *label, int tag, bool disabled = false)
 
 enum MenuTag
 {
-    kTagRename = 1,
+    kTagCopy = 1,
+    kTagMove,
+    kTagDelete,
+    kTagRename,
     kTagNewFolder,
     kTagSelectAll,
     kTagInvert,
@@ -198,6 +226,16 @@ class PaneView
         table.set_focus(model.state().focus_index, true);
         if (replay_entrance)
             table.enter();
+    }
+
+    // What an operation acts on: the marked names, or else the focused row.
+    std::vector<std::string> picked() const
+    {
+        if (!model.state().selected.empty())
+            return model.state().selected;
+        const Entry *focused = model.focused();
+        return focused != nullptr ? std::vector<std::string>{focused->name}
+                                  : std::vector<std::string>{};
     }
 
     // A mark is kept by row id, which a name in another folder shares: set every one again.
@@ -285,8 +323,8 @@ class PaneView
                     paint.page_text());
         char line[200];
         if (state.truncated)
-            std::snprintf(line, sizeof(line), "%d of %d items", static_cast<int>(state.entries.size()),
-                          state.total_entries);
+            std::snprintf(line, sizeof(line), "%d of %d items",
+                          static_cast<int>(state.entries.size()), state.total_entries);
         else
             std::snprintf(line, sizeof(line), "%d items", state.total_entries);
         std::string facts = line;
@@ -308,6 +346,8 @@ class PaneView
             std::string sorted = line;
             if (!state.selected.empty())
                 sorted += "   -   " + std::to_string(state.selected.size()) + " marked";
+            if (hui::explorer::is_protected_folder(state.path))
+                sorted += "   -   protected: can be read and copied from, not changed";
             paint.body(sorted, x, area_.y + 80.0f, 18.0f, paint.page_text_muted());
         }
         table.draw(canvas);
@@ -328,10 +368,11 @@ class ExplorerScreen final : public app::Concept
 {
   public:
     explicit ExplorerScreen(app::Context &context)
-        : context_(context), panes_{PaneView(source_, g_start_left, true),
-                                    PaneView(source_, g_start_right, false)}
+        : context_(context),
+          panes_{PaneView(source_, g_start_left, true), PaneView(source_, g_start_right, false)}
     {
-        split_.style.theme = theme();
+        const ui::Theme &look = theme();
+        split_.style.theme = look;
         split_.style.ratio = 0.5f;
         split_.style.gap = 40.0f;
         split_.set_bounds({kMargin, kTop, kRight - kMargin, kBottom - kTop});
@@ -339,14 +380,40 @@ class ExplorerScreen final : public app::Concept
         for (int i = 0; i < 2; ++i)
             panes_[i].layout(split_.pane_rect(i));
         const Rect screen{0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight};
-        menu_.style.theme = theme();
+        menu_.style.theme = look;
         menu_.set_bounds(screen);
-        prompt_.style.theme = theme();
+        prompt_.style.theme = look;
         prompt_.style.max_length = 128;
         prompt_.keyboard.style.bindings = ui::KeyboardBindings::standard();
         prompt_.set_bounds(screen);
-        toasts_.style.theme = theme();
+        toasts_.style.theme = look;
         toasts_.set_bounds(screen);
+        conflict_.style.theme = look;
+        conflict_.set_bounds(screen);
+        hold_delete_.style.theme = look;
+        hold_delete_.label = "Hold to delete";
+        hold_delete_.hint = "Keep holding";
+        hold_delete_.set_bounds(
+            {gfx::kVirtualWidth * 0.5f - 440.0f + 44.0f, 320.0f + 214.0f, 380.0f, 64.0f});
+        hold_delete_.set_active(true);
+        cancel_hold_.style.theme = look;
+        cancel_hold_.style.action = Action::back;
+        cancel_hold_.style.glyph = ui::Button::circle;
+        cancel_hold_.style.role = ui::ButtonRole::secondary;
+        cancel_hold_.style.height = 44.0f;
+        cancel_hold_.style.text_size = 20.0f;
+        cancel_hold_.label = "Cancel";
+        cancel_hold_.hint = "Keep holding";
+        cancel_hold_.set_bounds({kRight - 280.0f, 236.0f, 280.0f, 44.0f});
+        cancel_hold_.set_active(true);
+        bar_.style.theme = look;
+        bar_.set_bounds({kMargin, 268.0f, kRight - kMargin - 320.0f, 10.0f});
+    }
+
+    // A job still running when the app closes is told to stop, then the worker is joined.
+    ~ExplorerScreen() override
+    {
+        hui::explorer::request_cancel(&job_.progress, &job_.mutex);
     }
 
     const app::ConceptInfo &info() const override
@@ -376,9 +443,40 @@ class ExplorerScreen final : public app::Concept
     {
         clock_ += dt;
         age_ += dt;
+        if (job_active_)
+            poll_job(feedback);
         const int active = split_.focus() == 1 ? 1 : 0;
         PaneView &pane = panes_[active];
-        if (prompt_.is_open())
+        if (conflict_.is_open())
+        {
+            // Skip is the safe answer to a back press.
+            const ui::Event event = conflict_.handle(input, feedback);
+            if (event == ui::Event::activated)
+                answer(conflict_.choice(), feedback);
+            else if (event == ui::Event::cancelled)
+                answer(0, feedback);
+        }
+        else if (job_active_)
+        {
+            // The panes are locked while a job runs; the one thing to do is to stop it.
+            if (cancel_hold_.handle(input, feedback) == ui::Event::activated)
+                hui::explorer::request_cancel(&job_.progress, &job_.mutex);
+        }
+        else if (confirm_delete_)
+        {
+            if (input.is_pressed(Action::back))
+            {
+                confirm_delete_ = false;
+                hold_delete_.reset();
+            }
+            else if (hold_delete_.handle(input, feedback) == ui::Event::activated)
+            {
+                confirm_delete_ = false;
+                hold_delete_.reset();
+                start_job(JobKind::remove, delete_pane_, delete_names_, feedback);
+            }
+        }
+        else if (prompt_.is_open())
         {
             // The prompt, then nothing else: it takes every input while it is open.
             if (prompt_.handle(input, feedback) == ui::Event::activated)
@@ -394,21 +492,30 @@ class ExplorerScreen final : public app::Concept
         {
             if (input.is_pressed(Action::menu))
                 open_menu(active, feedback);
+            else if (input.is_pressed(Action::west))
+                start_transfer(JobKind::copy, active, feedback);
             else
                 pane.handle(input, feedback);
             const ui::Event event = pane.move(input, feedback);
-            // Past a table's edge: the focus crosses the split (or is refused where there is no pane).
+            // Past a table's edge: the focus crosses the split (or is refused where there is no
+            // pane).
             if (event == ui::Event::none && pane.table.exit() != Direction::none)
                 split_.handle_exit(pane.table.exit(), input, feedback);
         }
         for (int i = 0; i < 2; ++i)
         {
-            panes_[i].table.set_active(i == split_.focus());
+            panes_[i].table.set_active(i == split_.focus() && !job_active_);
             panes_[i].table.update(dt);
         }
         split_.update(dt);
         menu_.update(dt);
         prompt_.update(dt);
+        conflict_.update(dt);
+        if (job_active_)
+            bar_.set_value(fraction(snap_));
+        bar_.update(dt);
+        cancel_hold_.update(dt);
+        hold_delete_.update(dt);
         toasts_.update(dt, feedback);
     }
 
@@ -420,6 +527,8 @@ class ExplorerScreen final : public app::Concept
         frame.scene.push_opacity(tween::cubic_out(age_ / 0.3f));
         draw_header(paint, "Files", "Browse and manage the console's drives");
         ui::Canvas canvas{frame.scene, context_.fonts, frame.glass_texture, clock_};
+        if (job_active_)
+            draw_progress(paint, canvas);
         split_.draw(canvas);
         for (int i = 0; i < 2; ++i)
         {
@@ -428,17 +537,24 @@ class ExplorerScreen final : public app::Concept
             split_.end_pane(canvas, i);
         }
         ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
+        if (confirm_delete_)
+            draw_delete_panel(frame, top);
         menu_.draw(top);
         prompt_.draw(top);
+        conflict_.draw(top);
         toasts_.draw(top);
         static constexpr ui::Hint kHints[] = {
-            {ui::Button::cross, "Open"},
-            {ui::Button::circle, "Up"},
-            {ui::Button::triangle, "Mark"},
-            {ui::Button::options, "Menu"},
-            {ui::Button::l2, "Sort", ui::Button::r2},
+            {ui::Button::cross, "Open"},    {ui::Button::circle, "Up"},
+            {ui::Button::triangle, "Mark"}, {ui::Button::square, "Copy"},
+            {ui::Button::options, "Menu"},  {ui::Button::l2, "Sort", ui::Button::r2},
         };
-        draw_hints(frame.scene, context_.fonts, look, kHints);
+        static constexpr ui::Hint kBusy[] = {
+            {ui::Button::circle, "Hold to cancel"},
+        };
+        if (job_active_)
+            draw_hints(frame.scene, context_.fonts, look, kBusy);
+        else
+            draw_hints(frame.scene, context_.fonts, look, kHints);
         frame.scene.pop_opacity();
     }
 
@@ -448,6 +564,69 @@ class ExplorerScreen final : public app::Concept
     }
 
   private:
+    static const char *verb(JobKind kind, bool past)
+    {
+        switch (kind)
+        {
+        case JobKind::copy:
+            return past ? "Copied" : "Copying";
+        case JobKind::move:
+            return past ? "Moved" : "Moving";
+        case JobKind::remove:
+            return past ? "Deleted" : "Deleting";
+        }
+        return "";
+    }
+
+    // 0..1: by bytes when there are any, else by the files counted so far.
+    static float fraction(const CopyProgress &progress)
+    {
+        float value = 0.0f;
+        if (progress.bytes_total > 0)
+            value = static_cast<float>(static_cast<double>(progress.bytes_done) /
+                                       static_cast<double>(progress.bytes_total));
+        else if (progress.files_total > 0)
+            value =
+                static_cast<float>(progress.files_done) / static_cast<float>(progress.files_total);
+        return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+    }
+
+    void draw_progress(ui::Painter &paint, ui::Canvas &canvas) const
+    {
+        char line[200];
+        std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s", verb(snap_.kind, false),
+                      snap_.files_done, snap_.files_total, size_text(snap_.bytes_done).c_str(),
+                      size_text(snap_.bytes_total).c_str());
+        const float width = kRight - kMargin - 320.0f;
+        paint.body(ui::fit_body(paint, line, 20.0f, width), kMargin, 252.0f, 20.0f,
+                   paint.page_text());
+        bar_.draw(canvas);
+        cancel_hold_.draw(canvas);
+    }
+
+    void draw_delete_panel(const app::Frame &frame, ui::Canvas &top) const
+    {
+        (void)frame;
+        const ui::Theme &look = theme();
+        ui::Painter over(top.list, context_.fonts, look);
+        over.fill({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                  Color::rgb(0x000000, 0.45f));
+        const Rect panel{gfx::kVirtualWidth * 0.5f - 440.0f, 320.0f, 880.0f, 330.0f};
+        over.surface(panel, look.radius_card, look.surface, look.outline, 1.0f);
+        char title[80];
+        std::snprintf(title, sizeof(title),
+                      delete_names_.size() == 1 ? "Delete this item?" : "Delete %zu items?",
+                      delete_names_.size());
+        over.heading(title, panel.x + 44.0f, panel.y + 78.0f, 40.0f, look.text);
+        over.body(ui::fit_body(over, delete_summary_, 22.0f, panel.w - 88.0f), panel.x + 44.0f,
+                  panel.y + 128.0f, 22.0f, look.text_muted);
+        over.body("This cannot be undone. Folders go with everything in them.", panel.x + 44.0f,
+                  panel.y + 166.0f, 20.0f, look.text_muted);
+        hold_delete_.draw(top);
+        over.body("Circle: keep it", panel.x + panel.w - 44.0f, panel.y + panel.h - 36.0f, 20.0f,
+                  look.text_muted, gfx::Align::right);
+    }
+
     void open_menu(int active, app::Feedback &feedback)
     {
         PaneView &pane = panes_[active];
@@ -455,12 +634,16 @@ class ExplorerScreen final : public app::Concept
         const bool has_row = pane.entry_of_row(row) != nullptr;
         ui::MenuItem line;
         line.separator = true;
-        menu_.set_items({menu_item("Rename", kTagRename, !has_row),
-                         menu_item("New folder", kTagNewFolder), line,
-                         menu_item("Select all", kTagSelectAll),
-                         menu_item("Invert selection", kTagInvert),
-                         menu_item("Clear selection", kTagClear,
-                                   pane.model.state().selected.empty())});
+        ui::MenuItem remove = menu_item("Delete", kTagDelete, !has_row);
+        remove.danger = true;
+        menu_.set_items(
+            {menu_item("Copy to other pane", kTagCopy, !has_row),
+             menu_item("Move to other pane", kTagMove, !has_row), line,
+             menu_item("Rename", kTagRename, !has_row), menu_item("New folder", kTagNewFolder),
+             line, menu_item("Select all", kTagSelectAll),
+             menu_item("Invert selection", kTagInvert),
+             menu_item("Clear selection", kTagClear, pane.model.state().selected.empty()), line,
+             remove});
         const Rect anchor = has_row ? pane.table.row_rect(row) : pane.table.bounds();
         menu_.open(anchor, feedback);
     }
@@ -470,6 +653,15 @@ class ExplorerScreen final : public app::Concept
         PaneView &pane = panes_[active];
         switch (tag)
         {
+        case kTagCopy:
+            start_transfer(JobKind::copy, active, feedback);
+            break;
+        case kTagMove:
+            start_transfer(JobKind::move, active, feedback);
+            break;
+        case kTagDelete:
+            begin_delete(active);
+            break;
         case kTagRename:
             if (const Entry *entry = pane.entry_of_row(pane.table.focus()))
             {
@@ -512,24 +704,194 @@ class ExplorerScreen final : public app::Concept
         if (what == PromptFor::none)
             return;
         const int error = what == PromptFor::rename ? pane.model.rename_entry(rename_target_, text)
-                                                     : pane.model.make_folder(text);
+                                                    : pane.model.make_folder(text);
         if (error != 0)
         {
             toasts_.push(ui::StatusKind::danger,
-                         what == PromptFor::rename ? "Could not rename" : "Could not make the folder",
+                         what == PromptFor::rename ? "Could not rename"
+                                                   : "Could not make the folder",
                          describe_error(error));
             return;
         }
         pane.refresh(false);
-        // The other pane may show the same folder.
+        reload_other(active);
+        toasts_.push(ui::StatusKind::success, what == PromptFor::rename ? "Renamed" : "Folder made",
+                     text);
+    }
+
+    // The other pane may show the folder that just changed.
+    void reload_other(int active)
+    {
         PaneView &other = panes_[1 - active];
-        if (other.model.state().path == pane.model.state().path)
+        if (other.model.state().path == panes_[active].model.state().path)
         {
             other.model.reload();
             other.refresh(false);
         }
-        toasts_.push(ui::StatusKind::success, what == PromptFor::rename ? "Renamed" : "Folder made",
-                     text);
+    }
+
+    // ---- jobs ------------------------------------------------------------------------------
+
+    void start_transfer(JobKind kind, int active, app::Feedback &feedback)
+    {
+        PaneView &from = panes_[active];
+        PaneView &to = panes_[1 - active];
+        const std::vector<std::string> names = from.picked();
+        if (names.empty())
+        {
+            feedback.play(audio::Cue::error);
+            return;
+        }
+        if ((kind != JobKind::copy &&
+             hui::explorer::is_protected_folder(from.model.state().path)) ||
+            hui::explorer::is_protected_folder(to.model.state().path))
+        {
+            toasts_.push(ui::StatusKind::warning, "That folder is protected",
+                         "It can be read and copied from, but nothing is changed in it");
+            return;
+        }
+        if (kind == JobKind::move && from.model.state().path == to.model.state().path)
+        {
+            toasts_.push(ui::StatusKind::info, "Both panes are in the same folder",
+                         "Open another folder in the other pane first");
+            return;
+        }
+        start_job(kind, active, names, feedback);
+    }
+
+    void begin_delete(int active)
+    {
+        const std::vector<std::string> names = panes_[active].picked();
+        if (names.empty())
+            return;
+        if (hui::explorer::is_protected_folder(panes_[active].model.state().path))
+        {
+            toasts_.push(ui::StatusKind::warning, "That folder is protected",
+                         "Nothing can be deleted in it");
+            return;
+        }
+        delete_names_ = names;
+        delete_pane_ = active;
+        delete_summary_ = names[0];
+        if (names.size() == 2)
+            delete_summary_ += " and " + names[1];
+        else if (names.size() > 2)
+            delete_summary_ +=
+                ", " + names[1] + " and " + std::to_string(names.size() - 2) + " more";
+        hold_delete_.reset();
+        confirm_delete_ = true;
+    }
+
+    void start_job(JobKind kind, int active, std::vector<std::string> names,
+                   app::Feedback &feedback)
+    {
+        (void)feedback;
+        CopyPlan plan;
+        plan.kind = kind;
+        plan.names = std::move(names);
+        plan.from_dir = panes_[active].model.state().path;
+        plan.to_dir = panes_[1 - active].model.state().path;
+        plan.policy = ConflictPolicy::ask;
+        {
+            std::lock_guard<std::mutex> lock(job_.mutex);
+            job_.progress = CopyProgress{};
+            job_.progress.kind = kind;
+        }
+        snap_ = CopyProgress{};
+        snap_.kind = kind;
+        job_source_ = active;
+        job_active_ = true;
+        conflict_answered_ = false;
+        bar_.set_value(0.0f, true);
+        cancel_hold_.reset();
+        worker_.queue(
+            [this, plan]
+            { hui::explorer::run_copy_job(source_, source_, plan, &job_.progress, &job_.mutex); });
+    }
+
+    // Once a frame while a job runs: take its progress, ask about a conflict, notice the end.
+    void poll_job(app::Feedback &feedback)
+    {
+        {
+            std::lock_guard<std::mutex> lock(job_.mutex);
+            snap_ = job_.progress;
+        }
+        if (snap_.state == JobState::waiting_conflict)
+        {
+            if (!conflict_.is_open() && !conflict_answered_)
+            {
+                ui::DialogContent content;
+                content.icon = ui::StatusKind::question;
+                content.title = "Already there";
+                content.body = snap_.conflict_name + "\nis in the other folder already.";
+                ui::DialogButton skip;
+                skip.label = "Skip";
+                ui::DialogButton overwrite;
+                overwrite.label = "Overwrite";
+                overwrite.destructive = true;
+                ui::DialogButton both;
+                both.label = "Keep both";
+                content.buttons = {skip, overwrite, both};
+                content.default_button = 0;
+                conflict_.open(content, feedback);
+            }
+        }
+        else
+        {
+            conflict_answered_ = false;
+        }
+        if (snap_.state == JobState::done || snap_.state == JobState::failed ||
+            snap_.state == JobState::cancelled)
+            finish_job();
+    }
+
+    void answer(int choice, app::Feedback &feedback)
+    {
+        (void)feedback;
+        const ConflictPolicy answers[] = {ConflictPolicy::skip, ConflictPolicy::overwrite,
+                                          ConflictPolicy::rename};
+        hui::explorer::answer_conflict(&job_.progress, &job_.mutex,
+                                       answers[choice < 0 || choice > 2 ? 0 : choice]);
+        conflict_answered_ = true;
+    }
+
+    void finish_job()
+    {
+        job_active_ = false;
+        conflict_.dismiss();
+        const CopyProgress &result = snap_;
+        char text[160];
+        if (result.state == JobState::failed)
+        {
+            std::snprintf(text, sizeof(text), "%s (error %d)", describe_error(result.last_error),
+                          result.last_error);
+            toasts_.push(ui::StatusKind::danger, "Stopped", text);
+        }
+        else if (result.state == JobState::cancelled)
+        {
+            std::snprintf(text, sizeof(text), "%d file(s) were done before it stopped",
+                          result.files_done);
+            toasts_.push(ui::StatusKind::info, "Cancelled", text);
+        }
+        else
+        {
+            std::snprintf(text, sizeof(text), "%d file(s)", result.files_done);
+            std::string body = text;
+            if (result.skipped > 0)
+                body += ", " + std::to_string(result.skipped) + " skipped";
+            if (result.failed > 0)
+                body += ", " + std::to_string(result.failed) +
+                        " failed: " + describe_error(result.last_error);
+            toasts_.push(result.failed > 0 ? ui::StatusKind::warning : ui::StatusKind::success,
+                         verb(result.kind, true), body);
+        }
+        // What was done changed both folders; the marks were of the names just handled.
+        panes_[job_source_].model.clear_selection();
+        for (PaneView &pane : panes_)
+        {
+            pane.model.reload();
+            pane.refresh(false);
+        }
     }
 
     app::Context &context_;
@@ -541,8 +903,22 @@ class ExplorerScreen final : public app::Concept
     ui::Menu menu_;
     ui::InputPrompt prompt_;
     ui::ToastStack toasts_;
+    ui::Dialog conflict_;
+    ui::HoldButton hold_delete_;
+    ui::HoldButton cancel_hold_;
+    ui::ProgressBar bar_;
     PromptFor prompt_for_ = PromptFor::none;
     std::string rename_target_;
+    bool confirm_delete_ = false;
+    int delete_pane_ = 0;
+    std::vector<std::string> delete_names_;
+    std::string delete_summary_;
+    bool job_active_ = false;
+    int job_source_ = 0;
+    bool conflict_answered_ = false;
+    CopyProgress snap_; // the job's progress as of this frame: only the UI thread touches it
+    JobShared job_;
+    hui::explorer::JobWorker worker_; // last: joined first, before what its jobs use
 };
 
 } // namespace

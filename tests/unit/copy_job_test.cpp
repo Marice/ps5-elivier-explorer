@@ -456,7 +456,7 @@ TEST_F(CopyJobTest, DeletesFoldersAndFilesAndCountsThem)
     EXPECT_FALSE(fs::exists(root_ + "/from/game"));
     EXPECT_FALSE(fs::exists(root_ + "/from/notes.txt"));
     EXPECT_TRUE(fs::exists(root_ + "/from/empty.bin")); // not asked for
-    EXPECT_EQ(result.files_done, 3); // disc.bin, deep.txt, notes.txt
+    EXPECT_EQ(result.files_done, 3);                    // disc.bin, deep.txt, notes.txt
 }
 
 TEST_F(CopyJobTest, ANameThatIsNotThereIsAFailureNotACrash)
@@ -464,6 +464,39 @@ TEST_F(CopyJobTest, ANameThatIsNotThereIsAFailureNotACrash)
     const CopyProgress result = run(plan(JobKind::copy, {"nothing.txt"}));
     EXPECT_EQ(result.state, JobState::done);
     EXPECT_EQ(result.failed, 1);
+    EXPECT_EQ(result.last_error, ENOENT);
+}
+
+TEST_F(CopyJobTest, NothingIsChangedInAProtectedFolder)
+{
+    // These paths do not exist here: the engine must refuse before it looks at anything.
+    CopyPlan remove = plan(JobKind::remove, {"libc.prx"});
+    remove.from_dir = "/system/common/lib";
+    CopyProgress result = run(remove);
+    EXPECT_EQ(result.state, JobState::failed);
+    EXPECT_EQ(result.last_error, EPERM);
+
+    CopyPlan into = plan(JobKind::copy, {"notes.txt"});
+    into.to_dir = "/mnt/sandbox/PPSA01_000";
+    write_file(root_ + "/from/notes.txt", "n");
+    result = run(into);
+    EXPECT_EQ(result.state, JobState::failed);
+    EXPECT_EQ(result.last_error, EPERM);
+
+    CopyPlan out = plan(JobKind::move, {"notes.txt"});
+    out.from_dir = "/";
+    result = run(out);
+    EXPECT_EQ(result.state, JobState::failed);
+}
+
+TEST_F(CopyJobTest, CopyingOutOfAProtectedFolderIsFine)
+{
+    // Only the guard is looked at here: the source does not exist, so it fails as a missing file
+    // (ENOENT, a normal failure), not as a refusal.
+    CopyPlan out = plan(JobKind::copy, {"libc.prx"});
+    out.from_dir = "/system/common/lib";
+    const CopyProgress result = run(out);
+    EXPECT_EQ(result.state, JobState::done);
     EXPECT_EQ(result.last_error, ENOENT);
 }
 

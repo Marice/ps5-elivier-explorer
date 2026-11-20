@@ -27,7 +27,8 @@ constexpr int kColModified = 2;
 // the pane's entries.
 std::vector<ui::TableRow> to_rows(const hui::explorer::PaneState &state);
 
-// "2026-11-20 20:09" in UTC (the console has no local clock to ask: no localtime_r), "-" for no time.
+// "2026-11-20 20:09" in UTC (the console has no local clock to ask: no localtime_r), "-" for no
+// time.
 std::string format_time(std::int64_t unix_seconds);
 
 enum class FileKind : std::uint8_t

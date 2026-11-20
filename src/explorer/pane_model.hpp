@@ -35,8 +35,8 @@ enum class SortKey : std::uint8_t
 
 struct PaneState
 {
-    std::string path;            // absolute, no trailing slash except "/"
-    std::vector<Entry> entries;  // sorted, at most kPaneRowCap
+    std::string path;           // absolute, no trailing slash except "/"
+    std::vector<Entry> entries; // sorted, at most kPaneRowCap
     SortKey sort_key = SortKey::name;
     bool sort_descending = false;
     bool dirs_first = true;

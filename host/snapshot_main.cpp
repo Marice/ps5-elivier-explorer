@@ -198,9 +198,9 @@ int main(int argc, char **argv)
     {
         const char *name;
         std::size_t size;
-    } samples[] = {{"autoload.txt", 92},     {"game10.ffpfsc", 40960}, {"game2.ffpfsc", 4096},
-                   {"notes.txt", 1536},      {"photo.png", 262144},    {"ps5-smbd.elf", 819200},
-                   {"README", 12},           {"track01.ogg", 3145728}, {"unknown.xyz", 700}};
+    } samples[] = {{"autoload.txt", 92}, {"game10.ffpfsc", 40960}, {"game2.ffpfsc", 4096},
+                   {"notes.txt", 1536},  {"photo.png", 262144},    {"ps5-smbd.elf", 819200},
+                   {"README", 12},       {"track01.ogg", 3145728}, {"unknown.xyz", 700}};
     for (const auto &sample : samples)
         hui::save::write_atomic(browse + "/" + sample.name, std::string(sample.size, 'x'));
     const std::string stick = demo_root + "/mnt/usb0";

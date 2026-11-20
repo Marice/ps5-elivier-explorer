@@ -27,6 +27,16 @@ inline std::string path_join(const std::string &path, const std::string &name)
     return path + "/" + name;
 }
 
+// The folder a path is in; "/" for a top-level path and for "/" itself.
+inline std::string path_parent(const std::string &path)
+{
+    const std::string clean = path_normalized(path);
+    const std::size_t slash = clean.rfind('/');
+    if (slash == std::string::npos || slash == 0)
+        return "/";
+    return clean.substr(0, slash);
+}
+
 // Whether `path` is `ancestor` or lies below it.
 inline bool path_is_inside(const std::string &path, const std::string &ancestor)
 {

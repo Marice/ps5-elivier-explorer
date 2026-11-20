@@ -45,6 +45,7 @@ class ScriptedSource final : public Source
   public:
     bool one_device = true;
     std::function<int(const std::string &from, const std::string &to)> copy_hook;
+    std::function<SpaceInfo(const std::string &path)> space_hook;
     std::atomic<int> copies{0};
 
     std::string display_name() const override
@@ -61,7 +62,7 @@ class ScriptedSource final : public Source
     }
     SpaceInfo space(const std::string &p) const override
     {
-        return real_.space(p);
+        return space_hook ? space_hook(p) : real_.space(p);
     }
     int make_directory(const std::string &p) override
     {
@@ -446,6 +447,34 @@ TEST_F(CopyJobTest, AFullDriveStopsTheWholeJob)
     EXPECT_EQ(result.state, JobState::failed);
     EXPECT_EQ(result.last_error, ENOSPC);
     EXPECT_EQ(source_.copies.load(), 1); // it did not go on to try the next one
+}
+
+TEST_F(CopyJobTest, AFileThatDoesNotFitIsRefusedBeforeAnyByteIsWritten)
+{
+    write_file(root_ + "/from/big.bin", std::string(5000, 'b'));
+    write_file(root_ + "/from/small.bin", "s");
+    source_.space_hook = [](const std::string &)
+    {
+        SpaceInfo space;
+        space.known = true;
+        space.total_bytes = 100000;
+        space.free_bytes = 4000; // less than big.bin, more than small.bin
+        return space;
+    };
+    const CopyProgress result = run(plan(JobKind::copy, {"big.bin", "small.bin"}));
+    EXPECT_EQ(result.state, JobState::failed); // the drive is full: stop, as for any full drive
+    EXPECT_EQ(result.last_error, ENOSPC);
+    EXPECT_EQ(source_.copies.load(), 0); // not even started
+    EXPECT_FALSE(fs::exists(root_ + "/to/big.bin"));
+    EXPECT_FALSE(has_leftover(root_));
+}
+
+TEST_F(CopyJobTest, UnknownFreeSpaceDoesNotStopACopy)
+{
+    write_file(root_ + "/from/a.bin", "a");
+    source_.space_hook = [](const std::string &) { return SpaceInfo{}; }; // known = false
+    EXPECT_EQ(run(plan(JobKind::copy, {"a.bin"})).state, JobState::done);
+    EXPECT_TRUE(fs::exists(root_ + "/to/a.bin"));
 }
 
 TEST_F(CopyJobTest, DeletesFoldersAndFilesAndCountsThem)

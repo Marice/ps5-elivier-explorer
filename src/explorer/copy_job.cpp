@@ -9,6 +9,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 #include <utility>
 
@@ -45,6 +46,7 @@ class Engine
             progress_->state = JobState::running;
             progress_->kind = plan_.kind;
         }
+        const auto started = std::chrono::steady_clock::now();
         trace("job: %s %zu name(s) %s -> %s",
               plan_.kind == JobKind::copy ? "copy"
                                           : (plan_.kind == JobKind::move ? "move" : "delete"),
@@ -81,9 +83,12 @@ class Engine
         if (progress_->state != JobState::cancelled)
             progress_->state = fatal_ ? JobState::failed : JobState::done;
         progress_->current_name.clear();
-        trace("job: end, state %d, %d done, %d skipped, %d failed",
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        const double mib = static_cast<double>(progress_->bytes_done) / (1024.0 * 1024.0);
+        trace("job: end, state %d, %d done, %d skipped, %d failed; %.1f MiB in %.1f s = %.1f MiB/s",
               static_cast<int>(progress_->state), progress_->files_done, progress_->skipped,
-              progress_->failed);
+              progress_->failed, mib, seconds, seconds > 0.05 ? mib / seconds : 0.0);
     }
 
   private:
@@ -331,6 +336,16 @@ class Engine
                 fail(error, src);
                 return;
             }
+        }
+        // Does it fit? Found out before the first byte, not after twenty gigabytes.
+        const SpaceInfo space = to_.space(path_parent(dst));
+        if (space.known && entry.size > space.free_bytes)
+        {
+            trace("job: %s needs %llu bytes, %llu free", src.c_str(),
+                  static_cast<unsigned long long>(entry.size),
+                  static_cast<unsigned long long>(space.free_bytes));
+            fail(ENOSPC, src);
+            return;
         }
         const std::string part = dst + kPartSuffix;
         std::uint64_t last = 0;

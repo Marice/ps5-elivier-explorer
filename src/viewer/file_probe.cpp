@@ -53,7 +53,7 @@ IconKind icon_by_extension(const std::string &ext)
         return IconKind::archive;
     if (one_of(ext, {"png", "jpg", "jpeg", "bmp", "gif", "webp", "dds", "tga"}))
         return IconKind::image;
-    if (one_of(ext, {"mp3", "ogg", "wav", "flac", "at9", "m4a", "opus"}))
+    if (one_of(ext, {"mp3", "ogg", "wav", "flac", "at9", "m4a", "opus", "m3u", "m3u8"}))
         return IconKind::audio;
     if (one_of(ext, {"mp4", "mkv", "avi", "webm", "mov"}))
         return IconKind::video;

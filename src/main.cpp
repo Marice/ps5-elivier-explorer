@@ -248,6 +248,7 @@ int main()
 
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
+    hui::concepts::set_explorer_services(nullptr, &mixer);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");

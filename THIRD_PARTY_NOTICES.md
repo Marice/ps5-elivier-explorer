@@ -66,6 +66,10 @@ domain or MIT; see `src/third_party/stb/LICENSE`), vendored at the commit in
 `src/third_party/stb/UPSTREAM` by `tools/update-stb.sh`. It is linked into the
 PS5 application.
 
+MP3 files are decoded by [minimp3](https://github.com/lieff/minimp3) (CC0 1.0;
+see `src/third_party/minimp3/LICENSE`), vendored at the commit in
+`src/third_party/minimp3/UPSTREAM`.
+
 ## Image decoding
 
 The Support screen's QR code is decoded by [stb_image](https://github.com/nothings/stb)

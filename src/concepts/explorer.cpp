@@ -97,8 +97,8 @@ constexpr app::TourStep kTour[] = {
     {0.8f, 0, Direction::none, "files-text"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
-    // The other viewers, walking up the list from the text file (the last in the stick's list): a DDS texture, a picture, a binary
-    // file in the hex view, a playlist and a song with its cover.
+    // The other viewers, walking up the list from the text file (the last in the stick's list): a
+    // DDS texture, a picture, a binary file in the hex view, a playlist and a song with its cover.
     {0.2f, 0, Direction::up, nullptr},
     {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
     {3.0f, 0, Direction::none, "files-dds"},

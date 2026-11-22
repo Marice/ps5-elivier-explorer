@@ -218,8 +218,8 @@ int main(int argc, char **argv)
     for (const char *name : {"movie.mkv", "setup.zip"})
         hui::save::write_atomic(stick + "/" + name, std::string(5000, 'y'));
     // Real pictures, songs and a playlist (host/demo), and a binary file for the hex view.
-    for (const char *name : {"sunrise.jpg", "texture.dds", "evening-light.mp3", "morning-walk.mp3",
-                             "family.m3u"})
+    for (const char *name :
+         {"sunrise.jpg", "texture.dds", "evening-light.mp3", "morning-walk.mp3", "family.m3u"})
     {
         std::string bytes;
         if (!hui::save::read_file(assets + "/../host/demo/" + name, &bytes, 64u << 20))

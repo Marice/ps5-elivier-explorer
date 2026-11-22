@@ -20,6 +20,9 @@ class LocalSource final : public Source
     bool stat(const std::string &path, Entry *out) const override;
     SpaceInfo space(const std::string &path) const override;
 
+    std::int64_t read_range(const std::string &path, std::uint64_t offset, void *buffer,
+                            std::size_t size) const override;
+
     int make_directory(const std::string &path) override;
     int rename(const std::string &from, const std::string &to) override;
     int remove_file(const std::string &path) override;

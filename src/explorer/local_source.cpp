@@ -152,6 +152,32 @@ SpaceInfo LocalSource::space(const std::string &path) const
     return space;
 }
 
+std::int64_t LocalSource::read_range(const std::string &path, std::uint64_t offset, void *buffer,
+                                     std::size_t size) const
+{
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -errno;
+    std::int64_t total = 0;
+    char *out = static_cast<char *>(buffer);
+    while (static_cast<std::size_t>(total) < size)
+    {
+        const ssize_t n = ::pread(fd, out + total, size - static_cast<std::size_t>(total),
+                                  static_cast<off_t>(offset + static_cast<std::uint64_t>(total)));
+        if (n < 0)
+        {
+            const int error = errno;
+            ::close(fd);
+            return -error;
+        }
+        if (n == 0)
+            break; // the end of the file
+        total += n;
+    }
+    ::close(fd);
+    return total;
+}
+
 int LocalSource::make_directory(const std::string &path)
 {
     if (::mkdir(path.c_str(), 0777) != 0)

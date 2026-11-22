@@ -9,7 +9,7 @@ namespace hui::app
 
 ConceptFactory overlay_concept()
 {
-    return concepts::make_support;
+    return concepts::make_about;
 }
 
 std::span<const ConceptFactory> concept_registry()

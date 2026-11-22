@@ -23,6 +23,8 @@
 #include "concepts/concepts.hpp"
 #include "gfx/gl_program.hpp"
 #include "gfx/image.hpp"
+#include "viewer/handler.hpp"
+#include "viewer/viewer.hpp"
 #include "gfx/renderer.hpp"
 #include "manifest.hpp"
 #include "ui/fonts.hpp"
@@ -142,6 +144,58 @@ class Recorder
 
 } // namespace
 
+namespace
+{
+
+// A handler that only claims extensions, so the preview shows which files "open" (vivid icons).
+class DemoHandler final : public hui::viewer::FileHandler
+{
+  public:
+    DemoHandler(const char *id, const char *verb, hui::viewer::IconKind icon,
+                std::initializer_list<const char *> exts)
+        : id_(id), verb_(verb), icon_(icon), exts_(exts.begin(), exts.end())
+    {
+    }
+    const char *id() const override
+    {
+        return id_;
+    }
+    const char *label() const override
+    {
+        return id_;
+    }
+    const char *verb() const override
+    {
+        return verb_;
+    }
+    hui::viewer::IconKind icon() const override
+    {
+        return icon_;
+    }
+    hui::viewer::Match match(const hui::viewer::FileProbe &probe) const override
+    {
+        for (const std::string &ext : exts_)
+        {
+            if (probe.ext() == ext)
+                return hui::viewer::Match::extension;
+        }
+        return hui::viewer::Match::none;
+    }
+    std::unique_ptr<hui::viewer::Viewer> open(hui::viewer::ViewerContext &,
+                                              const hui::viewer::FileRef &) const override
+    {
+        return nullptr;
+    }
+
+  private:
+    const char *id_;
+    const char *verb_;
+    hui::viewer::IconKind icon_;
+    std::vector<std::string> exts_;
+};
+
+} // namespace
+
 int main(int argc, char **argv)
 {
     if (argc < 3)
@@ -207,8 +261,22 @@ int main(int argc, char **argv)
         hui::save::ensure_directory(stick + "/" + folder);
     for (const char *name : {"movie.mkv", "setup.zip", "cover.jpg", "mix.mp3", "todo.md"})
         hui::save::write_atomic(stick + "/" + name, std::string(5000, 'y'));
+    hui::save::write_atomic(
+        stick + "/a-really-long-file-name-that-will-not-fit-in-the-column-of-this-list.png",
+        std::string(3000, 'z'));
+    static hui::viewer::HandlerRegistry demo_registry;
+    demo_registry.add(
+        std::make_unique<DemoHandler>("Text", "View text", hui::viewer::IconKind::text,
+                                      std::initializer_list<const char *>{"txt", "md", "json"}));
+    demo_registry.add(
+        std::make_unique<DemoHandler>("Image", "View image", hui::viewer::IconKind::image,
+                                      std::initializer_list<const char *>{"png", "jpg"}));
+    demo_registry.add(
+        std::make_unique<DemoHandler>("Sound", "Play", hui::viewer::IconKind::audio,
+                                      std::initializer_list<const char *>{"mp3", "ogg"}));
+    hui::concepts::set_explorer_registry(&demo_registry);
     hui::concepts::set_explorer_start(browse, stick);
-    hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
+    hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::demo::Catalog catalog;
     if (!catalog.build_covers(renderer, fonts))
     {

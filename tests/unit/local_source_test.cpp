@@ -6,11 +6,13 @@
 #include <gtest/gtest.h>
 
 #include <cerrno>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace
@@ -197,6 +199,45 @@ TEST_F(LocalSourceTest, CopyOfAnEmptyFileMakesAnEmptyFile)
     EXPECT_EQ(result, 0);
     EXPECT_TRUE(fs::exists(root_ + "/copy.bin"));
     EXPECT_EQ(fs::file_size(root_ + "/copy.bin"), 0u);
+}
+
+TEST_F(LocalSourceTest, ReadsARangeWithoutTheRestOfTheFile)
+{
+    std::string data;
+    for (int i = 0; i < 10000; ++i)
+        data += static_cast<char>('a' + i % 26);
+    write_file(root_ + "/range.bin", data);
+    char buffer[64];
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 5000, buffer, 10), 10);
+    EXPECT_EQ(std::string(buffer, 10), data.substr(5000, 10));
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 0, buffer, 4), 4);
+    EXPECT_EQ(std::string(buffer, 4), "abcd");
+    // The end of the file: fewer bytes than asked, then none.
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 9995, buffer, 64), 5);
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 10000, buffer, 64), 0);
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 1u << 30, buffer, 64), 0);
+    EXPECT_EQ(source_.read_range(root_ + "/range.bin", 0, buffer, 0), 0);
+}
+
+TEST_F(LocalSourceTest, AFileBeyondFourGigabytesIsReadAtItsEnd)
+{
+    // A sparse file: 5 GiB long without taking the space.
+    const std::string path = root_ + "/sparse.bin";
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT, 0644);
+    ASSERT_GE(fd, 0);
+    const std::uint64_t at = 5ull << 30;
+    ASSERT_EQ(::pwrite(fd, "TAIL", 4, static_cast<off_t>(at)), 4);
+    ::close(fd);
+    char buffer[8] = {};
+    EXPECT_EQ(source_.read_range(path, at, buffer, 8), 4);
+    EXPECT_EQ(std::string(buffer, 4), "TAIL");
+}
+
+TEST_F(LocalSourceTest, ARangeOfAMissingFileOrAFolderIsAnError)
+{
+    char buffer[8];
+    EXPECT_EQ(source_.read_range(root_ + "/nowhere", 0, buffer, 8), -ENOENT);
+    EXPECT_EQ(source_.read_range(root_ + "/dir", 0, buffer, 8), -EISDIR);
 }
 
 TEST_F(LocalSourceTest, KnowsWhetherTwoPathsAreOnTheSameDevice)

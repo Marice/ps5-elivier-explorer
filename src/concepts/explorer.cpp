@@ -9,7 +9,9 @@
 
 #include "concepts/concepts.hpp"
 
+#include "concepts/explorer/icons.hpp"
 #include "concepts/explorer/look.hpp"
+#include "concepts/explorer/marquee.hpp"
 #include "concepts/explorer/row_format.hpp"
 #include "core/held_step.hpp"
 #include "core/tween.hpp"
@@ -28,6 +30,8 @@
 #include "ui/components/split_view.hpp"
 #include "ui/components/table.hpp"
 #include "ui/components/toast.hpp"
+#include "viewer/registry.hpp"
+#include "viewer/viewer.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -72,6 +76,10 @@ constexpr app::TourStep kTour[] = {
     {0.4f, 0, Direction::down, "files-moved"},
     {0.4f, 0, Direction::right, nullptr},
     {0.8f, 0, Direction::down, "files-right"},
+    // Down to the long name and wait: after a second it scrolls.
+    {0.15f, 0, Direction::down, nullptr},
+    {0.15f, 0, Direction::down, nullptr},
+    {2.6f, 0, Direction::none, "files-longname"},
     {0.3f, action_bit(Action::menu), Direction::none, nullptr},
     {0.7f, 0, Direction::none, "files-menu"},
     // Down to Delete, which only asks: holding Cross is what deletes, and the tour never holds.
@@ -86,15 +94,24 @@ constexpr app::TourStep kTour[] = {
     {0.8f, 0, Direction::none, "files-delete"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
-    // R3 opens Support on top (the shell does that; a test that drives only this design ignores
+    // R3 opens About on top (the shell does that; a test that drives only this design ignores
     // it).
     {0.3f, action_bit(Action::r3), Direction::none, nullptr},
-    {0.9f, 0, Direction::none, "files-support"},
+    {0.9f, 0, Direction::none, "files-about"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
 };
 
 constexpr float kHeaderHeight = 100.0f; // a pane's path and facts, above its table
+
+const hui::viewer::HandlerRegistry *g_registry = nullptr;
+hui::viewer::TextureHost *g_textures = nullptr;
+hui::audio::Mixer *g_mixer = nullptr;
+
+const hui::viewer::HandlerRegistry &registry()
+{
+    return g_registry != nullptr ? *g_registry : hui::viewer::default_registry();
+}
 
 std::string g_start_left = "/";
 std::string g_start_right = "/";
@@ -158,6 +175,7 @@ ui::MenuItem menu_item(const char *label, int tag, bool disabled = false)
 
 enum MenuTag
 {
+    kTagOpenAs = 100, // and up: one per handler that can open the file
     kTagCopy = 1,
     kTagMove,
     kTagDelete,
@@ -196,6 +214,9 @@ class PaneView
         name.flex = 3.0f;
         name.strong = true;
         name.sortable = false;
+        // The cell draws itself: an icon, then the name (cut, or scrolling when it has had focus).
+        name.cell = [this](ui::Canvas &canvas, const Rect &cell, const ui::TableRow &row,
+                           float /*focus*/) { draw_name_cell(canvas, cell, row); };
         ui::TableColumn size;
         size.title = "Size";
         size.width = 120.0f;
@@ -280,6 +301,8 @@ class PaneView
             }
             else if (focused != nullptr && model.enter(focused->name))
                 refresh(true);
+            else if (focused != nullptr && focused->kind != EntryKind::directory)
+                open_request = focused->name; // a file: the screen picks its handler
             else if (focused != nullptr && focused->kind == EntryKind::directory)
                 feedback.play(audio::Cue::error); // could not be listed: the header says why
         }
@@ -367,10 +390,77 @@ class PaneView
                        paint.page_text_muted(), gfx::Align::center);
     }
 
+    // The file a Cross press asked to open (the screen reads and clears it), else empty.
+    std::string open_request;
+
+    // Once a frame: how long the focused row has stayed focused, for the scrolling name.
+    void tick(float dt, bool active)
+    {
+        active_ = active;
+        const PaneState &state = model.state();
+        if (state.focus_index != last_row_ || state.path != last_path_)
+        {
+            last_row_ = state.focus_index;
+            last_path_ = state.path;
+            focus_held_ = 0.0f;
+        }
+        else
+        {
+            focus_held_ += dt;
+        }
+    }
+
+    // The probe a listing makes of an entry: name and size, nothing read.
+    static hui::viewer::FileProbe probe_of(const Entry &entry)
+    {
+        return hui::viewer::FileProbe(entry.name, entry.size);
+    }
+
     PaneModel model;
     ui::Table table;
 
   private:
+    void draw_name_cell(ui::Canvas &canvas, const Rect &cell, const ui::TableRow &row) const
+    {
+        const Entry *entry = model.entry_at(row.tag);
+        if (entry == nullptr)
+            return;
+        const ui::Theme &look = theme();
+        ui::Painter paint(canvas.list, canvas.fonts, look);
+        constexpr float kIcon = 28.0f;
+        constexpr float kSize = 20.0f;
+        const Rect box{cell.x + 4.0f, cell.cy() - kIcon * 0.5f, kIcon, kIcon};
+        const bool folder = entry->kind == EntryKind::directory;
+        const hui::viewer::FileProbe probe = probe_of(*entry);
+        draw_file_icon(canvas.list, box, folder ? FileKind::folder : registry().icon_for(probe),
+                       folder || registry().supported(probe), look.surface);
+        const float x = box.x + kIcon + 12.0f;
+        const float width = cell.x + cell.w - 6.0f - x;
+        const float baseline = cell.cy() + kSize * 0.34f;
+        const float text_width = paint.label_width(entry->name, kSize);
+        if (text_width <= width)
+        {
+            paint.label(entry->name, x, baseline, kSize, look.text);
+            return;
+        }
+        // Too long: cut with "..." until the row has been focused a while, then scroll it through.
+        const bool focused = active_ && row.tag == model.state().focus_index;
+        const float offset = focused ? marquee_offset(text_width, width, focus_held_) : 0.0f;
+        if (offset <= 0.0f)
+        {
+            paint.label(ui::fit_label(paint, entry->name, kSize, width), x, baseline, kSize,
+                        look.text);
+            return;
+        }
+        canvas.list.push_clip({x, cell.y, width, cell.h});
+        paint.label(entry->name, x - offset, baseline, kSize, look.text);
+        canvas.list.pop_clip();
+    }
+
+    bool active_ = false;
+    float focus_held_ = 0.0f;
+    int last_row_ = -1;
+    std::string last_path_;
     // Rows that fit in the table below its header, less one so the row that was last stays in view.
     int page_rows() const
     {
@@ -445,6 +535,8 @@ class ExplorerScreen final : public app::Concept
     ~ExplorerScreen() override
     {
         hui::explorer::request_cancel(&job_.progress, &job_.mutex);
+        if (viewer_)
+            viewer_->close();
     }
 
     const app::ConceptInfo &info() const override
@@ -474,6 +566,15 @@ class ExplorerScreen final : public app::Concept
     {
         clock_ += dt;
         age_ += dt;
+        if (viewer_)
+        {
+            // A viewer has the pad and the screen to itself until it says it is done.
+            viewer_->update(input, dt, feedback);
+            if (viewer_->closing())
+                close_viewer();
+            toasts_.update(dt, feedback);
+            return;
+        }
         if (job_active_)
             poll_job(feedback);
         const int active = split_.focus() == 1 ? 1 : 0;
@@ -527,6 +628,12 @@ class ExplorerScreen final : public app::Concept
                 start_transfer(JobKind::copy, active, feedback);
             else
                 pane.handle(input, dt, feedback);
+            if (!pane.open_request.empty())
+            {
+                const std::string name = pane.open_request;
+                pane.open_request.clear();
+                open_file(active, name, nullptr);
+            }
             const ui::Event event = pane.move(input, feedback);
             // Past a table's edge: the focus crosses the split (or is refused where there is no
             // pane).
@@ -536,6 +643,7 @@ class ExplorerScreen final : public app::Concept
         for (int i = 0; i < 2; ++i)
         {
             panes_[i].table.set_active(i == split_.focus() && !job_active_);
+            panes_[i].tick(dt, i == split_.focus() && !job_active_);
             panes_[i].table.update(dt);
         }
         split_.update(dt);
@@ -556,8 +664,20 @@ class ExplorerScreen final : public app::Concept
         begin_frame(frame, look);
         ui::Painter paint(frame.scene, context_.fonts, look);
         frame.scene.push_opacity(tween::cubic_out(age_ / 0.3f));
-        draw_header(paint, "Files", "Browse and manage the console's drives");
         ui::Canvas canvas{frame.scene, context_.fonts, frame.glass_texture, clock_};
+        ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
+        if (viewer_)
+        {
+            // The open file has the whole screen: its name on top, then its own view and hints.
+            draw_header(paint, viewer_->title().c_str(), viewer_path_.c_str());
+            viewer_->draw(paint, canvas,
+                          {kMargin, kTop - 20.0f, kRight - kMargin, kBottom - kTop + 40.0f});
+            toasts_.draw(top);
+            draw_hints(frame.scene, context_.fonts, look, viewer_->hints());
+            frame.scene.pop_opacity();
+            return;
+        }
+        draw_header(paint, "Files", "Browse and manage the console's drives");
         if (job_active_)
             draw_progress(paint, canvas);
         split_.draw(canvas);
@@ -567,30 +687,34 @@ class ExplorerScreen final : public app::Concept
             panes_[i].draw(paint, canvas);
             split_.end_pane(canvas, i);
         }
-        ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
         if (confirm_delete_)
             draw_delete_panel(frame, top);
         menu_.draw(top);
         prompt_.draw(top);
         conflict_.draw(top);
         toasts_.draw(top);
-        static constexpr ui::Hint kHints[] = {
-            {ui::Button::cross, "Open"},
-            {ui::Button::circle, "Up"},
-            {ui::Button::triangle, "Mark"},
-            {ui::Button::square, "Copy"},
-            {ui::Button::options, "Menu"},
-            {ui::Button::l2, "Sort", ui::Button::r2},
-            {ui::Button::l1, "Page", ui::Button::r1},
-            {ui::Button::right_stick, "Support"},
-        };
         static constexpr ui::Hint kBusy[] = {
             {ui::Button::circle, "Hold to cancel"},
         };
         if (job_active_)
+        {
             draw_hints(frame.scene, context_.fonts, look, kBusy);
+        }
         else
-            draw_hints(frame.scene, context_.fonts, look, kHints);
+        {
+            // What Cross does depends on what is under it: open a folder, or the handler's verb.
+            const ui::Hint hints[] = {
+                {ui::Button::cross, cross_label()},
+                {ui::Button::circle, "Up"},
+                {ui::Button::triangle, "Mark"},
+                {ui::Button::square, "Copy"},
+                {ui::Button::options, "Menu"},
+                {ui::Button::l2, "Sort", ui::Button::r2},
+                {ui::Button::l1, "Page", ui::Button::r1},
+                {ui::Button::right_stick, "About"},
+            };
+            draw_hints(frame.scene, context_.fonts, look, hints);
+        }
         frame.scene.pop_opacity();
     }
 
@@ -600,6 +724,17 @@ class ExplorerScreen final : public app::Concept
     }
 
   private:
+    // The label for Cross: the handler's verb for the focused file, else "Open".
+    const char *cross_label() const
+    {
+        const PaneView &pane = panes_[split_.focus() == 1 ? 1 : 0];
+        const Entry *focused = pane.model.focused();
+        if (focused == nullptr || focused->kind == EntryKind::directory)
+            return "Open";
+        const hui::viewer::FileHandler *handler = registry().best(PaneView::probe_of(*focused));
+        return handler != nullptr ? handler->verb() : "Open";
+    }
+
     static const char *verb(JobKind kind, bool past)
     {
         switch (kind)
@@ -672,14 +807,35 @@ class ExplorerScreen final : public app::Concept
         line.separator = true;
         ui::MenuItem remove = menu_item("Delete", kTagDelete, !has_row);
         remove.danger = true;
-        menu_.set_items(
-            {menu_item("Copy to other pane", kTagCopy, !has_row),
-             menu_item("Move to other pane", kTagMove, !has_row), line,
-             menu_item("Rename", kTagRename, !has_row), menu_item("New folder", kTagNewFolder),
-             line, menu_item("Select all", kTagSelectAll),
-             menu_item("Invert selection", kTagInvert),
-             menu_item("Clear selection", kTagClear, pane.model.state().selected.empty()), line,
-             remove});
+        std::vector<ui::MenuItem> items;
+        // A file can be opened by every handler that knows it: the first is what Cross does.
+        open_as_.clear();
+        if (const Entry *entry = pane.entry_of_row(row);
+            entry != nullptr && entry->kind != EntryKind::directory)
+        {
+            const std::string path = PaneModel::join(pane.model.state().path, entry->name);
+            for (const hui::viewer::FileHandler *handler :
+                 registry().all(probe_with_head(*entry, path)))
+            {
+                ui::MenuItem item;
+                item.label = std::string("Open as ") + handler->label();
+                item.tag = kTagOpenAs + static_cast<int>(open_as_.size());
+                items.push_back(item);
+                open_as_.push_back(handler);
+            }
+            if (!open_as_.empty())
+                items.push_back(line);
+        }
+        for (const ui::MenuItem &item :
+             {menu_item("Copy to other pane", kTagCopy, !has_row),
+              menu_item("Move to other pane", kTagMove, !has_row), line,
+              menu_item("Rename", kTagRename, !has_row), menu_item("New folder", kTagNewFolder),
+              line, menu_item("Select all", kTagSelectAll),
+              menu_item("Invert selection", kTagInvert),
+              menu_item("Clear selection", kTagClear, pane.model.state().selected.empty()), line,
+              remove})
+            items.push_back(item);
+        menu_.set_items(std::move(items));
         const Rect anchor = has_row ? pane.table.row_rect(row) : pane.table.bounds();
         menu_.open(anchor, feedback);
     }
@@ -725,8 +881,79 @@ class ExplorerScreen final : public app::Concept
             pane.sync_marks();
             break;
         default:
+            if (tag >= kTagOpenAs && tag - kTagOpenAs < static_cast<int>(open_as_.size()))
+            {
+                if (const Entry *entry = pane.entry_of_row(pane.table.focus()))
+                    open_file(active, entry->name,
+                              open_as_[static_cast<std::size_t>(tag - kTagOpenAs)]);
+            }
             break;
         }
+    }
+
+    // ---- viewers ---------------------------------------------------------------------------
+
+    // A probe that can read the first bytes of the file, for sniffing the content.
+    hui::viewer::FileProbe probe_with_head(const Entry &entry, const std::string &path) const
+    {
+        return hui::viewer::FileProbe(
+            entry.name, entry.size,
+            [this, path]
+            {
+                char buffer[hui::viewer::FileProbe::kHeadBytes];
+                const std::int64_t n = source_.read_range(path, 0, buffer, sizeof(buffer));
+                return n > 0 ? std::string(buffer, static_cast<std::size_t>(n)) : std::string();
+            });
+    }
+
+    // Opens a file with `handler`, or with the one that knows it best when none is given.
+    void open_file(int active, const std::string &name, const hui::viewer::FileHandler *handler)
+    {
+        PaneView &pane = panes_[active];
+        const Entry *entry = nullptr;
+        for (const Entry &candidate : pane.model.state().entries)
+        {
+            if (candidate.name == name)
+                entry = &candidate;
+        }
+        if (entry == nullptr)
+            return;
+        const std::string path = PaneModel::join(pane.model.state().path, name);
+        if (handler == nullptr)
+            handler = registry().best(probe_with_head(*entry, path));
+        if (handler == nullptr)
+        {
+            toasts_.push(ui::StatusKind::info, "Nothing can open this yet", name);
+            return;
+        }
+        hui::viewer::ViewerContext context;
+        context.fonts = &context_.fonts;
+        context.worker = &worker_;
+        context.textures = g_textures;
+        context.mixer = g_mixer;
+        hui::viewer::FileRef file;
+        file.source = &source_;
+        file.path = path;
+        file.entry = *entry;
+        viewer_ = handler->open(context, file);
+        if (!viewer_)
+        {
+            toasts_.push(ui::StatusKind::danger, "Could not open it", name);
+            return;
+        }
+        viewer_path_ = path;
+        hui::explorer::trace("viewer: %s opens %s", handler->id(), path.c_str());
+    }
+
+    void close_viewer()
+    {
+        if (!viewer_)
+            return;
+        hui::explorer::trace("viewer: closed %s", viewer_path_.c_str());
+        viewer_->close();
+        viewer_.reset();
+        for (PaneView &pane : panes_)
+            pane.table.enter(); // the lists slide back in
     }
 
     // The prompt was answered: rename or make the folder, and say what happened.
@@ -939,6 +1166,9 @@ class ExplorerScreen final : public app::Concept
     ui::Menu menu_;
     ui::InputPrompt prompt_;
     ui::ToastStack toasts_;
+    std::unique_ptr<hui::viewer::Viewer> viewer_; // the open file, when there is one
+    std::string viewer_path_;
+    std::vector<const hui::viewer::FileHandler *> open_as_; // what the open menu lists
     ui::Dialog conflict_;
     ui::HoldButton hold_delete_;
     ui::HoldButton cancel_hold_;
@@ -958,6 +1188,17 @@ class ExplorerScreen final : public app::Concept
 };
 
 } // namespace
+
+void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer)
+{
+    g_textures = textures;
+    g_mixer = mixer;
+}
+
+void set_explorer_registry(const hui::viewer::HandlerRegistry *registry)
+{
+    g_registry = registry;
+}
 
 void set_explorer_start(std::string left, std::string right)
 {

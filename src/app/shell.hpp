@@ -24,7 +24,7 @@ namespace hui::app
 //
 //   L1 / R1    previous / next design (cross-fade and slide)
 //   touchpad   info panel: what the design demonstrates and where its code is
-//   L3 / R3    the overlay design (Support), on top of the active one
+//   L3 / R3    the overlay design (About), on top of the active one
 //
 // Everything else goes to the active design. The shell also keeps the
 // settings on disk and feeds the telemetry the designs may display.

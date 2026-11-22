@@ -70,6 +70,13 @@ class Source
     virtual bool stat(const std::string &path, Entry *out) const = 0;
     virtual SpaceInfo space(const std::string &path) const = 0;
 
+    // Reads up to `size` bytes at `offset` without reading the rest of the file: the one primitive
+    // the viewers read through, so a 23 GB file opens at once. Returns the bytes read (fewer than
+    // asked at the end of the file, 0 past it) or -errno. Short reads are not repeated for the
+    // caller.
+    virtual std::int64_t read_range(const std::string &path, std::uint64_t offset, void *buffer,
+                                    std::size_t size) const = 0;
+
     virtual int make_directory(const std::string &path) = 0;
     virtual int rename(const std::string &from, const std::string &to) = 0;
     virtual int remove_file(const std::string &path) = 0;

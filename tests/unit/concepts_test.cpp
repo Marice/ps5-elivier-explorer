@@ -36,7 +36,7 @@ TEST_F(EveryConcept, DescribesItself)
     EXPECT_GE(ids.size(), 1u);
 }
 
-// Support is outside the switcher now (L3 or R3 opens it), so the loop above no longer meets it.
+// About is outside the switcher now (L3 or R3 opens it), so the loop above no longer meets it.
 TEST_F(EveryConcept, TheOverlayDesignDescribesItselfAndDraws)
 {
     const hui::app::ConceptFactory factory = hui::app::overlay_concept();

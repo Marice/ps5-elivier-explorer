@@ -64,6 +64,11 @@ class ScriptedSource final : public Source
     {
         return space_hook ? space_hook(p) : real_.space(p);
     }
+    std::int64_t read_range(const std::string &p, std::uint64_t offset, void *buffer,
+                            std::size_t size) const override
+    {
+        return real_.read_range(p, offset, buffer, size);
+    }
     int make_directory(const std::string &p) override
     {
         return real_.make_directory(p);

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // GL work, so not for screens themselves: the app hands this to the screen that needs it (see
-// concepts::set_support_qr).
+// concepts::set_about_qr).
 //
-//   std::uint32_t texture = gfx::load_png_texture("/app0/assets/support/ko-fi-qr.png");
+//   std::uint32_t texture = gfx::load_png_texture("/app0/assets/about/ko-fi-qr.png");
 
 #pragma once
 

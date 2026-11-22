@@ -10,6 +10,16 @@
 #include <memory>
 #include <string>
 
+namespace hui::viewer
+{
+class HandlerRegistry;
+class TextureHost;
+} // namespace hui::viewer
+namespace hui::audio
+{
+class Mixer;
+}
+
 namespace hui::concepts
 {
 
@@ -17,9 +27,14 @@ namespace hui::concepts
 // To add one: write the file, declare its factory here and list it in
 // registry.cpp. These are EliVier Explorer's screens, in L1 / R1 order.
 std::unique_ptr<app::Concept> make_explorer(app::Context &context);
-std::unique_ptr<app::Concept> make_support(app::Context &context);
-// The Support screen's QR code: a PNG and how to make it a texture (GL work, done by the app).
-void set_support_qr(std::uint32_t (*load_png)(const std::string &path), std::string path);
+std::unique_ptr<app::Concept> make_about(app::Context &context);
+// The About screen's QR code: a PNG and how to make it a texture (GL work, done by the app).
+void set_about_qr(std::uint32_t (*load_png)(const std::string &path), std::string path);
+// What the file viewers use: where textures come from (GL, so the app supplies it) and the mixer.
+// Null in tests; a viewer that needs one says so on screen.
+void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer);
+// A handler registry other than the built-in one (tests); null brings the built-in one back.
+void set_explorer_registry(const hui::viewer::HandlerRegistry *registry);
 // The folders the explorer's two panes open in (the console's /data and /mnt; temporary ones in
 // tests).
 void set_explorer_start(std::string left, std::string right);

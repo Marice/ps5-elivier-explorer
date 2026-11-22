@@ -8,6 +8,7 @@
 
 #include "explorer/pane_model.hpp"
 #include "ui/components/table.hpp"
+#include "viewer/file_probe.hpp"
 
 #include <cstdint>
 #include <string>
@@ -35,18 +36,8 @@ std::string format_time(std::int64_t unix_seconds);
 // to the first and the last row. With no rows, 0.
 int paged_focus(int focus, int rows, int page, int direction);
 
-enum class FileKind : std::uint8_t
-{
-    folder,
-    archive,
-    image,
-    audio,
-    video,
-    text,
-    program,
-    disc, // a game or disc image
-    other,
-};
+// The picture a row gets: the viewer core knows the kinds (and which a handler claims).
+using FileKind = hui::viewer::IconKind;
 
 FileKind file_kind(const hui::explorer::Entry &entry);
 

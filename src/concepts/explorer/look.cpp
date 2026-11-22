@@ -3,6 +3,8 @@
 
 #include "concepts/explorer/look.hpp"
 
+#include "explorer/format.hpp"
+
 #include <cstdio>
 #include <string>
 
@@ -87,22 +89,7 @@ Rect side_panel(ui::Painter &paint, const Rect &r)
 
 std::string size_text(std::uint64_t bytes)
 {
-    static const char *const kUnits[] = {"KB", "MB", "GB", "TB"};
-    char text[32];
-    if (bytes < 1024)
-    {
-        std::snprintf(text, sizeof(text), "%llu B", static_cast<unsigned long long>(bytes));
-        return text;
-    }
-    double value = static_cast<double>(bytes) / 1024.0;
-    int unit = 0;
-    while (value >= 1024.0 && unit < 3)
-    {
-        value /= 1024.0;
-        ++unit;
-    }
-    std::snprintf(text, sizeof(text), value >= 100.0 ? "%.0f %s" : "%.1f %s", value, kUnits[unit]);
-    return text;
+    return hui::explorer::format_bytes(bytes);
 }
 
 } // namespace hui::concepts::explorer

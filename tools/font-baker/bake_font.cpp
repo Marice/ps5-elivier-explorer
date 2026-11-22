@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // usage: bake_font <font.ttf> <out.huifont> [pixel_size=56] [sdf_range=8] [atlas=1024]
-//                  [glyphs=basic|european]
+//                  [glyphs=basic|european|code]
 // Bakes printable ASCII plus a few UI symbols into a single-channel signed
 // distance field atlas with metrics and kerning (see src/gfx/font_format.hpp).
 
@@ -43,7 +43,11 @@ struct Baked
 // U+0386 to U+03CE, U+0410 to U+044F, Io), curly quotation marks, the euro
 // and the trade mark sign: about 450 more glyphs, which need a 2048 atlas at
 // 56 pixels. A face without Greek (Montserrat) simply skips those letters.
-std::vector<int> codepoints(bool european)
+//
+// code is european plus what a text or hex viewer meets in files: the box drawing (U+2500 to
+// U+257F) and block element (U+2580 to U+259F) ranges, and the replacement character U+FFFD that
+// stands for a byte that is not text. Another 160 glyphs: a monospace face needs 2048 for it.
+std::vector<int> codepoints(bool european, bool code)
 {
     std::vector<int> result;
     for (int c = 32; c < 127; ++c)
@@ -63,6 +67,12 @@ std::vector<int> codepoints(bool european)
             result.push_back(c);
         const int more[] = {0x0401, 0x0451, 0x2018, 0x2019, 0x201C, 0x201D, 0x201E, 0x20AC, 0x2122};
         result.insert(result.end(), std::begin(more), std::end(more));
+    }
+    if (code)
+    {
+        for (int c = 0x2500; c <= 0x259F; ++c)
+            result.push_back(c);
+        result.push_back(0xFFFD);
     }
     // Middle dot, multiplication sign, copyright, degree, en/em dash, bullet,
     // ellipsis, arrows, check mark, and (in fonts that have them) a full
@@ -92,13 +102,14 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european|code]\n", argv[0]);
         return 2;
     }
     const float pixel_size = argc > 3 ? std::strtof(argv[3], nullptr) : 56.0f;
     const int range = argc > 4 ? std::atoi(argv[4]) : 8;
     const int atlas_size = argc > 5 ? std::atoi(argv[5]) : 1024;
-    const bool european = argc > 6 && std::strcmp(argv[6], "european") == 0;
+    const bool code = argc > 6 && std::strcmp(argv[6], "code") == 0;
+    const bool european = code || (argc > 6 && std::strcmp(argv[6], "european") == 0);
 
     std::ifstream input(argv[1], std::ios::binary);
     std::vector<unsigned char> ttf((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -111,7 +122,7 @@ int main(int argc, char **argv)
     const float scale = stbtt_ScaleForMappingEmToPixels(&font, pixel_size);
 
     std::vector<Baked> glyphs;
-    for (int codepoint : codepoints(european))
+    for (int codepoint : codepoints(european, code))
     {
         if (codepoint != ' ' && stbtt_FindGlyphIndex(&font, codepoint) == 0)
         {

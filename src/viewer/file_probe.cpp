@@ -38,6 +38,15 @@ std::string extension_of(const std::string &name)
 
 } // namespace
 
+bool is_text_extension(const std::string &ext)
+{
+    return one_of(ext,
+                  {"txt",  "log", "ini",  "cfg", "conf",  "json", "xml",      "md",   "csv", "tsv",
+                   "lua",  "js",  "html", "htm", "css",   "yaml", "yml",      "toml", "svg", "srt",
+                   "nfo",  "inf", "sh",   "bat", "py",    "c",    "h",        "cpp",  "hpp", "cs",
+                   "java", "rs",  "go",   "sql", "cmake", "make", "gitignore"});
+}
+
 IconKind icon_by_extension(const std::string &ext)
 {
     if (one_of(ext, {"zip", "rar", "7z", "tar", "gz", "tgz", "xz", "bz2"}))
@@ -48,8 +57,7 @@ IconKind icon_by_extension(const std::string &ext)
         return IconKind::audio;
     if (one_of(ext, {"mp4", "mkv", "avi", "webm", "mov"}))
         return IconKind::video;
-    if (one_of(ext, {"txt", "log", "ini", "cfg", "json", "xml", "md", "csv", "lua", "js", "html",
-                     "yaml", "yml"}))
+    if (is_text_extension(ext))
         return IconKind::text;
     if (one_of(ext, {"elf", "self", "prx", "sprx", "bin"}))
         return IconKind::program;

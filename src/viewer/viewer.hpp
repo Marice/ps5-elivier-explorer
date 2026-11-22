@@ -44,6 +44,9 @@ class TextureHost
 // needs one it does not have says so on screen instead of failing.
 struct ViewerContext
 {
+    // Where the viewer is drawn: the same rectangle the screen passes to draw(), so a viewer can
+    // size what it shows (rows, columns, pages) in update().
+    gfx::Rect area{0.0f, 0.0f, 1728.0f, 900.0f};
     const ui::Fonts *fonts = nullptr;
     hui::explorer::JobWorker *worker = nullptr;
     TextureHost *textures = nullptr;

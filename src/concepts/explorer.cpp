@@ -80,6 +80,20 @@ constexpr app::TourStep kTour[] = {
     {0.15f, 0, Direction::down, nullptr},
     {0.15f, 0, Direction::down, nullptr},
     {2.6f, 0, Direction::none, "files-longname"},
+    // Open the last file (a text one) and show it scrolled a little; the demo registry has the
+    // viewer.
+    {0.15f, 0, Direction::down, nullptr},
+    {0.15f, 0, Direction::down, nullptr},
+    {0.15f, 0, Direction::down, nullptr},
+    {0.15f, 0, Direction::down, nullptr},
+    {0.15f, 0, Direction::down, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.2f, 0, Direction::down, nullptr},
+    {0.2f, 0, Direction::right, nullptr},
+    {0.8f, 0, Direction::none, "files-text"},
+    {0.2f, action_bit(Action::back), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, nullptr},
+
     {0.3f, action_bit(Action::menu), Direction::none, nullptr},
     {0.7f, 0, Direction::none, "files-menu"},
     // Down to Delete, which only asks: holding Cross is what deletes, and the tour never holds.
@@ -105,6 +119,12 @@ constexpr app::TourStep kTour[] = {
 constexpr float kHeaderHeight = 100.0f; // a pane's path and facts, above its table
 // The Files screen has no title block (it is the only screen): the panes start near the top and
 // end just above the hint row.
+// Where an open file is drawn: under its title, above the hint row.
+Rect viewer_area()
+{
+    return {kMargin, kTop - 20.0f, kRight - kMargin, kBottom - kTop + 40.0f};
+}
+
 constexpr float kProgressTop = 24.0f; // the panel a running job draws over the top of the panes
 constexpr float kPanesTop = 36.0f;
 constexpr float kPanesBottom = 962.0f;
@@ -677,8 +697,7 @@ class ExplorerScreen final : public app::Concept
         {
             // The open file has the whole screen: its name on top, then its own view and hints.
             draw_header(paint, viewer_->title().c_str(), viewer_path_.c_str());
-            viewer_->draw(paint, canvas,
-                          {kMargin, kTop - 20.0f, kRight - kMargin, kBottom - kTop + 40.0f});
+            viewer_->draw(paint, canvas, viewer_area());
             toasts_.draw(top);
             draw_hints(frame.scene, context_.fonts, look, viewer_->hints());
             frame.scene.pop_opacity();
@@ -940,6 +959,7 @@ class ExplorerScreen final : public app::Concept
             return;
         }
         hui::viewer::ViewerContext context;
+        context.area = viewer_area();
         context.fonts = &context_.fonts;
         context.worker = &worker_;
         context.textures = g_textures;

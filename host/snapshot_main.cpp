@@ -24,6 +24,8 @@
 #include "gfx/gl_program.hpp"
 #include "gfx/image.hpp"
 #include "viewer/handler.hpp"
+#include "viewer/text_viewer.hpp"
+#include "viewer/text_viewer.hpp"
 #include "viewer/viewer.hpp"
 #include "gfx/renderer.hpp"
 #include "manifest.hpp"
@@ -259,15 +261,24 @@ int main(int argc, char **argv)
     const std::string stick = demo_root + "/mnt/usb0";
     for (const char *folder : {"Games", "Music", "Backups"})
         hui::save::ensure_directory(stick + "/" + folder);
-    for (const char *name : {"movie.mkv", "setup.zip", "cover.jpg", "mix.mp3", "todo.md"})
+    for (const char *name : {"movie.mkv", "setup.zip", "cover.jpg", "mix.mp3"})
         hui::save::write_atomic(stick + "/" + name, std::string(5000, 'y'));
+    {
+        // A text file with box drawing, accents and tabs: what the text viewer is for.
+        std::string todo = "# To do\n\n";
+        todo += "┌───────┐\n│EliVier│  Elise and Olivier\n└───────┘\n\n";
+        for (int i = 1; i <= 60; ++i)
+            todo +=
+                "- item " + std::to_string(i) +
+                ": café crème, naïve, über\t(a tab) and a long tail of words to scroll sideways "
+                "through\n";
+        hui::save::write_atomic(stick + "/todo.md", todo);
+    }
     hui::save::write_atomic(
         stick + "/a-really-long-file-name-that-will-not-fit-in-the-column-of-this-list.png",
         std::string(3000, 'z'));
     static hui::viewer::HandlerRegistry demo_registry;
-    demo_registry.add(
-        std::make_unique<DemoHandler>("Text", "View text", hui::viewer::IconKind::text,
-                                      std::initializer_list<const char *>{"txt", "md", "json"}));
+    demo_registry.add(std::make_unique<hui::viewer::TextHandler>());
     demo_registry.add(
         std::make_unique<DemoHandler>("Image", "View image", hui::viewer::IconKind::image,
                                       std::initializer_list<const char *>{"png", "jpg"}));

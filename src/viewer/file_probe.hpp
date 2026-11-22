@@ -31,6 +31,9 @@ enum class IconKind : std::uint8_t
 // The icon an extension (lower case, no dot) stands for; other for an unknown one.
 IconKind icon_by_extension(const std::string &ext);
 
+// Extensions of files that are text: the text viewer claims them, and their icon is a page of text.
+bool is_text_extension(const std::string &ext);
+
 class FileProbe
 {
   public:

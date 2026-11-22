@@ -336,7 +336,8 @@ std::unique_ptr<Viewer> SoundHandler::open(ViewerContext &context, const FileRef
             return nullptr;
         text.resize(static_cast<std::size_t>(got));
         const std::size_t slash = file.path.rfind('/');
-        tracks = parse_m3u(text, slash == 0 ? "" : file.path.substr(0, slash));
+        const std::string folder = slash == std::string::npos ? "." : slash == 0 ? "" : file.path.substr(0, slash);
+        tracks = parse_m3u(text, folder);
     }
     else
         tracks.push_back({file.path, ""});

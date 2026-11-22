@@ -1,106 +1,74 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/H5L629ZHNX)
 
-# PayLoader
+# EliVier Explorer
 
-A PS5 homebrew app (PPSA67670) that lets you manage your payloads with the controller, on the television. It is a
-front-end for [Payload Manager](https://github.com/itsPLK/ps5-payload-manager) (pldmgr) by itsPLK. pldmgr does the
-work and keeps every setting; PayLoader shows it as a console app, so you do not need a browser.
+A file explorer for the PS5 (`LAPY69432`), made for the controller and the television. Two panes, copy, move and
+delete that are hard to get wrong, and built-in viewers: text, pictures (also DDS), a hex view and an MP3 player
+with playlists.
 
-**Status:** first release. Tested on one PS5 Pro (firmware 13.60, Y2JB with ps5-autoloader): the Payloads,
-Repository and Autoload screens, editing the boot list, installing the Signal suite and making a recovery copy on a
-USB stick. Not yet confirmed on a console: starting pldmgr from PayLoader, and switching the chain between the
-console and the USB stick. The screens below show made-up preview data.
+I made it because the file explorers I tried were not pleasant to use, or were buggy (one wiped a whole USB
+drive). This one aims at comfort and at **opening files**, and it will grow: loading payloads, more file types and
+ShadowMount integration are on the list.
 
-![The Payloads screen](docs/media/payloader/payloads.png)
+**Status:** first version, tested on one PS5. The Files screen, the copy, move and delete jobs (including a
+cancelled 23 GB move), and the text, image, hex and MP3 viewers have been used on a console. Not yet tried on a
+console: a name conflict while copying, deleting a big folder, a file over 4 GB onto an exFAT or FAT32 drive, and
+DDS pictures over 16 megapixels. The screenshots below show made-up demo files.
+
+![The two panes](docs/media/explorer/files.png)
 
 ## What you need
 
-- A PS5 that runs homebrew apps (for example with etaHEN).
-- **pldmgr 0.6.0 or newer.** PayLoader talks to it on `127.0.0.1:8084`, and **brings its own copy**: when pldmgr
-  does not run, PayLoader offers to start it (it sends the copy to the ELF loader on port 9021, so an ELF loader such
-  as etaHEN's must run). pldmgr then keeps itself up to date from its official repository. PayLoader is pldmgr's
-  front-end: it switches off pldmgr's own home screen icon and browser start. pldmgr is not added to the boot
-  chain; after a restart PayLoader asks again. The Autoload screen works without pldmgr.
+- A PS5 that runs homebrew apps (tested with etaHEN).
+- Nothing else: the explorer does not need a payload or a server.
 
 ## Quick start
 
-1. **Install PayLoader:** unzip the [release](https://github.com/Marice/ps5-payloader/releases/latest) and copy the
-   `PPSA67670` folder to `/data/homebrew/` on the console (FTP).
-2. **Open it.** When pldmgr does not run, press X to start the one PayLoader brings. **L1** and **R1** move between the screens; the **touchpad** explains the screen you are on.
+1. **Install:** unzip the [release](https://github.com/Marice/ps5-elivier-explorer/releases/latest) and copy the
+   `LAPY69432` folder to `/data/homebrew/` on the console (FTP).
+2. **Open it** from the home screen. **Cross** opens a folder or a file, **Circle** goes up, **Options** opens the
+   menu. The **touchpad** is not used; **L3** or **R3** shows the About screen.
 
-When pldmgr does not run, every screen says how to start it and checks again every 3 seconds.
+## What it does
 
-## The screens
-
-| Screen | What it does |
+| | |
 | --- | --- |
-| **Payloads** | The payloads pldmgr has installed, favourites first, then the ones on a USB drive. **Cross** starts one. **Triangle** opens its menu: favourite, start with the autoload list, delete. |
-| **Repository** | The payloads in pldmgr's repositories. Each row says if it is installed, or which update is ready. **Cross** installs or updates; **Square** refreshes every repository. When the same payload is installed from another repository, PayLoader asks before it replaces it. |
-| **Autoload** | What starts with the console, in order, with waits between the payloads: the boot chain your console actually uses (see below). **Cross** on an entry moves it, changes a wait or removes it. For pldmgr's own list also on or off and the countdown; while pldmgr runs it, the screen shows its progress and can stop it. |
-| **Running** | The payloads that run now, with their memory. **Cross** stops one, after it asks. The system's own processes and pldmgr itself are not listed. |
-| **Settings** | pldmgr's repositories (add one by its address, remove one) and its options: extra repositories, the browser at start, its own home screen icon, the disc player, USB drives. |
-| **Support** | A QR code to [Ko-fi](https://ko-fi.com/H5L629ZHNX): if you like what I make, you can buy me a coffee or a beer. Works without pldmgr too. |
+| **Two panes** | One per folder or drive: `/data`, your USB drives and the rest of the file system. Sort by name, size or date (**L2** / **R2**); **L1** / **R1** turn a page in a long folder. Names that do not fit scroll after a second. |
+| **Copy, move, delete** | Mark files with **Triangle**, copy with **Square**. Jobs run in the background with progress and can be cancelled by holding a button. A name that is already there is asked about (skip, overwrite, keep both). Big files are copied in chunks, so memory stays small. **Delete** needs a button held. |
+| **Rename, new folder** | In the **Options** menu, with the on-screen keyboard. |
+| **Safe by default** | Changes (delete, move, rename, copy into) are only allowed in `/data` and on USB and extended drives. Everywhere else, system folders included, is read-only: you can look and copy files *out*, nothing more. Symbolic links are never followed. |
+| **File icons** | A file that can be opened has a coloured icon; the others are grey. The hint under **Cross** says what it will do. |
 
 <p>
-<img src="docs/media/payloader/repository.png" width="49%" alt="The Repository screen">
-<img src="docs/media/payloader/autoload.png" width="49%" alt="The Autoload screen">
+<img src="docs/media/explorer/menu.png" width="49%" alt="The Options menu">
+<img src="docs/media/explorer/text.png" width="49%" alt="The text viewer">
+</p>
+
+## The viewers
+
+Press **Cross** on a file. **Options** → *Open as...* opens any file with any viewer. **Circle** goes back.
+
+| Viewer | Files | What it does |
+| --- | --- | --- |
+| **Text** | `.txt .log .ini .json .xml .md .csv` and more, and any file that looks like text | Line numbers, accents, tabs and box drawing; scroll by line, page or column. The first 8 MB is read, so a big log opens at once. |
+| **Image** | `.jpg .png .bmp .gif .tga .dds` | Fit, fill and 1:1 (**Cross**), zoom (**L2** / **R2**), pan (stick). DDS: BC1 to BC5, BC7 and plain 8-bit pixels. Pictures over 16 megapixels are shown scaled down. |
+| **Hex** | every file | Offset, bytes and text, with a cursor, a scroll bar and *go to offset* (**Square**). Only the page in view is read, so a 23 GB file opens at once. View only: nothing is written. |
+| **Sound** | `.mp3`, `.m3u`, `.m3u8` | Title, artist, album picture, time, seek (D-pad left and right), volume (up and down). A playlist plays in order (**L1** / **R1** for the previous and next song) and skips songs that cannot play. The music stops when you close the viewer. It plays on the music volume of the settings. |
+
+<p>
+<img src="docs/media/explorer/image.png" width="49%" alt="The image viewer">
+<img src="docs/media/explorer/dds.png" width="49%" alt="A DDS texture">
 </p>
 <p>
-<img src="docs/media/payloader/running.png" width="49%" alt="The Running screen">
-<img src="docs/media/payloader/settings.png" width="49%" alt="The Settings screen">
+<img src="docs/media/explorer/hex.png" width="49%" alt="The hex viewer">
+<img src="docs/media/explorer/playlist.png" width="49%" alt="The MP3 player with a playlist">
 </p>
 
-## Which list the Autoload screen edits
+## Adding a file type
 
-There are two ways a console starts payloads after the exploit, and PayLoader shows the one in use:
-
-- **ps5-autoloader's list.** itsPLK's autoloader looks for `ps5_autoloader/autoload.txt` on a USB drive
-  (`/mnt/usb0` to `/mnt/usb7`) first, then in `/data`; folders for single apps (`ps5_autoloader_<TITLE_ID>`) come
-  first. PayLoader cannot tell which app the autoloader runs under, so it edits the general folder and names any
-  folders for single apps; it uses one of those only when there is no general list. When it finds one, it starts the files it names, one per line, with `!<ms>` waits. PayLoader then edits that
-  file directly, also when pldmgr does not run. Before the first change of a day it keeps the list as
-  `autoload.txt.bak-payloader-<date>` next to it. A payload installed in pldmgr is copied into the folder when you add
-  it; removing an entry keeps the file. When the list starts pldmgr too, the screen also says what pldmgr's own list
-  starts.
-- **pldmgr's own list.** When the autoloader finds no list, it starts pldmgr, and pldmgr starts its own list
-  (`/data/pldmgr/autoload.txt`) when its autoload is on. PayLoader edits that list through pldmgr.
-
-Changes take effect the next time the console starts. The app needs etaHEN's "Allow /data in sandbox" to read
-`/data`.
-
-### A USB stick as a safety net
-
-**Make a recovery USB** (Autoload screen) copies the list and the payloads next to it to `ps5_autoloader/` on the
-USB stick that is plugged in, **switched off**: the file is named `autoload.txt_disabled`, which the autoloader
-ignores, so the stick can stay in. Payloads that pldmgr keeps are named by their full path and not copied.
-
-When a stick with such a folder is plugged in, the Autoload screen shows **Start the chain from: Console / USB
-stick**. Switching renames the file on the stick (`autoload.txt_disabled` <-> `autoload.txt`); the autoloader looks
-on USB first, so a switched-on stick takes over from the next start. PayLoader always edits the list in use.
-
-**In an emergency**, when the chain no longer starts and PayLoader cannot be reached: put the stick in a PC and
-rename `ps5_autoloader/autoload.txt_disabled` to `autoload.txt`. The console then starts the stick's list. Fix the
-console's list in PayLoader, then switch back to the console.
-
-## How it works
-
-PayLoader calls pldmgr's HTTP API on `127.0.0.1:8084`, the same API that pldmgr's web page uses. Reads are `GET`;
-changes are `POST` with the header `X-PLDMGR-Request: 1`. The API has no version of its own, so PayLoader checks
-pldmgr's version first (`/version`) and reads every field with a fallback.
-
-| Screen | Calls |
-| --- | --- |
-| Payloads | `GET /list_payloads`, `GET /get_config`, `POST /loadpayload:<slot>`, `POST /manage:delete`, `POST /set_config` (favourites, autoload list) |
-| Repository | `GET /repository_payloads`, `POST /repository_refresh`, `POST /repository_install` |
-| Autoload | `GET /autoload_status`, `POST /set_config`, `POST /abort` |
-| Running | `GET /processes_list`, `POST /process_kill` |
-| Settings | `GET /sources_list`, `POST /sources_add`, `POST /sources_remove`, `POST /set_config` |
-
-Every request runs on a background thread, so the screen never waits for pldmgr. A screen asks only for what it shows.
-
-**Security.** pldmgr's web page has no password and listens on every network address (port 8084). Anyone on your
-network can open it. This is how pldmgr works, not something PayLoader adds or can change. Use them on a network you
-trust.
+A file type is one *handler*: it says how well it knows a file (by extension or by its first bytes), which icon it
+has, and how it opens. Add it to `src/viewer/registry.cpp`; the list icons, the hint under **Cross** and the *Open
+as* menu follow from the registry. See `src/viewer/handler.hpp`.
 
 ## Building
 
@@ -109,21 +77,20 @@ The app is built on [ps5-homebrew-ui](https://github.com/blackbearreloaded/ps5-h
 ```bash
 docker build -t payloader-build docker/      # once
 docker/run.sh make test-unit                  # unit tests, sanitizers on
-docker/run.sh make                            # the app folder in dist/PPSA67670
+docker/run.sh make app                        # the app folder in dist/LAPY69432
 docker/run.sh make lint                       # format, static analysis, metadata
-docker/run.sh tools/host-snapshots.sh build/snapshots all   # pictures of every screen
+docker/run.sh tools/host-snapshots.sh build/snapshots explorer   # pictures of the screens
 ```
 
-The pictures use a pretend pldmgr with made-up payloads (`src/payloader/demo.cpp`); `PAYLOADER_OFFLINE=1` shows the
-screens without one. The guides of the UI kit are in [docs/KIT_README.md](docs/KIT_README.md).
+The pictures use pretend files (`host/snapshot_main.cpp`, `host/demo`). The guides of the UI kit are in
+[docs/KIT_README.md](docs/KIT_README.md).
 
 ## Credits and licence
 
-- [Payload Manager (pldmgr)](https://github.com/itsPLK/ps5-payload-manager) by itsPLK: the payload that PayLoader
-  controls, and carries (GPL-3.0; the version is in `assets/payload/pldmgr.txt`, its source is that tag on GitHub;
-  `tools/bundle-pldmgr.sh` fetches it). PayLoader follows the rules of pldmgr's web page for versions, updates and
-  conflicts.
 - [ps5-homebrew-ui](https://github.com/blackbearreloaded/ps5-homebrew-ui) by BlackBearReloaded: the UI kit.
+  EliVier Explorer started from [PayLoader](https://github.com/Marice/ps5-payloader).
+- [stb](https://github.com/nothings/stb) (JPEG, PNG, BMP, GIF, TGA, Ogg), [minimp3](https://github.com/lieff/minimp3)
+  (MP3) and [bc7decomp](https://github.com/richgel999/bc7enc_rdo) (BC7) by their authors.
 
-PayLoader is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE) and
+EliVier Explorer is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

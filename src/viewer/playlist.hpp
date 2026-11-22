@@ -20,7 +20,7 @@ struct PlaylistEntry
 // BOM and CRLF line ends are fine. Capped at 5000 entries.
 std::vector<PlaylistEntry> parse_m3u(const std::string &text, const std::string &base_dir);
 
-// "/data/a/../b/./c.mp3" -> "/data/b/c.mp3".
+// "/data/a/../b/./c.mp3" -> "/data/b/c.mp3". A relative path stays relative ("a/../b" -> "b").
 std::string normalize_path(const std::string &path);
 
 } // namespace hui::viewer

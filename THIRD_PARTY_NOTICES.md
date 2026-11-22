@@ -72,9 +72,13 @@ see `src/third_party/minimp3/LICENSE`), vendored at the commit in
 
 ## Image decoding
 
-The Support screen's QR code is decoded by [stb_image](https://github.com/nothings/stb)
+Pictures (and the About screen's QR code) are decoded by [stb_image](https://github.com/nothings/stb)
 (public domain or MIT; see `src/third_party/stb/LICENSE`), vendored at the same
-commit by the same script, with PNG support only. It is linked into the PS5
+commit by the same script, with JPEG, PNG, BMP, GIF and TGA support. BC7 blocks
+of DDS pictures are decoded by bc7decomp from
+[bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) by Richard Geldreich, Jr.
+(MIT or public domain; the licence text is at the end of
+`src/third_party/bc7decomp/bc7decomp.inc`). Both are linked into the PS5
 application.
 
 ## Shader distance functions

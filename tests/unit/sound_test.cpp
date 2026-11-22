@@ -265,6 +265,8 @@ TEST(Playlist, NormalizeResolvesDotsAndNeverClimbsAboveTheRoot)
     EXPECT_EQ(normalize_path("/../../x"), "/x");
     EXPECT_EQ(normalize_path("/"), "/");
     EXPECT_EQ(normalize_path("//a//b/"), "/a/b");
+    EXPECT_EQ(normalize_path("build/x/../y/z.mp3"), "build/y/z.mp3"); // relative stays relative
+    EXPECT_EQ(normalize_path(""), ".");
 }
 
 TEST(Clock, FormatsMinutesAndHours)

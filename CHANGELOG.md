@@ -1,57 +1,20 @@
 # Changelog
 
-All notable changes to PayLoader are recorded here. The format follows
+All notable changes to EliVier Explorer are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the app's content version.
 
-## [v00.001.003] - 2026-11-10
-
-### Fixed
-
-- Repositories load on consoles where PayLoader made pldmgr's folder before pldmgr did. That folder was readable
-  but not writable for pldmgr, so pldmgr could not save its repositories or sources: PayLoader showed no
-  payloads to install or update. PayLoader now opens the folder for pldmgr, also on consoles where it is already
-  there.
-
-## [v00.001.002] - 2026-11-03
+## [Unreleased]
 
 ### Added
 
-- Support screen, after Settings: a QR code to Ko-fi, for those who'd like to buy me a coffee or a beer. It works
-  without pldmgr as well.
+- The Files screen: two panes, sorting, marks, rename, new folder, and copy, move and delete jobs that run in
+  the background, show progress and can be cancelled.
+- Changes only in `/data` and on USB and extended drives; the rest of the file system is read-only. Links are
+  never followed.
+- Viewers: text, images (JPEG, PNG, BMP, GIF, TGA, DDS), a hex view, and an MP3 player with playlists (`.m3u`)
+  and album pictures. *Open as...* opens any file with any viewer.
+- File icons, names that scroll when they do not fit, and an About screen on L3 or R3.
 
-## [v00.001.001] - 2026-10-30
+## Before this
 
-### Fixed
-
-- Repository screen: the "Install the whole suite" row counts only ps5-exporter, ps5-homeassistant and ps5-signal.
-  Another payload in the suite's repository no longer makes it read "Update ready" for good, or "Installed" while
-  one of the three is missing.
-
-## [v00.001.000] - 2026-10-19
-
-First release.
-
-### Added
-
-- Payloads screen: start an installed payload; mark favourites; add it to or take it out of the autoload list;
-  delete it.
-- Repository screen: install payloads from pldmgr's repositories, see and install updates, refresh every
-  repository. Asks before it replaces a payload installed from another repository.
-- Autoload screen: switch pldmgr's start list on or off, set the countdown, order the payloads, add and change waits.
-  Shows the progress of a run and can stop it.
-- Running screen: the payloads that run now with their memory; stop one after a question. System processes and
-  pldmgr itself are not listed.
-- Settings screen: add and remove repositories; pldmgr's options for extra repositories, the browser at start, its
-  own home screen icon, the disc player and USB drives.
-- A card on every screen when pldmgr does not run, is older than 0.6.0, or something else uses port 8084.
-- Autoload screen: the boot chain the console uses. ps5-autoloader's `autoload.txt` (USB before `/data`) is edited
-  directly, also without pldmgr, with a daily backup of the list; pldmgr's own list when the autoloader has none.
-  Payloads screen: "Start with autoload" acts on the same chain.
-- The Signal suite: PayLoader keeps its repository in pldmgr's sources, installs or updates the whole suite in one
-  go, recommends it when ps5-homeassistant is installed alone, and offers to start it with the console.
-- PayLoader brings pldmgr: when it does not run, X starts the bundled copy through the ELF loader. pldmgr's own
-  icon and browser start are switched off; PayLoader is its front-end.
-- Autoload screen: waits on a slider (0.5 to 25 seconds, steps of 0.5). Entries that pldmgr keeps are named by
-  their full path; comments and directives in the list (`#`, `@sync`) are kept.
-- A recovery copy of the boot list on a USB stick, stored switched off (`autoload.txt_disabled`), and a switch
-  between the console's list and the stick's.
+EliVier Explorer started from PayLoader v00.001.003; the history of PayLoader is in its own repository.

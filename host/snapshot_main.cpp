@@ -22,10 +22,11 @@
 #include "demo/catalog.hpp"
 #include "concepts/concepts.hpp"
 #include "gfx/gl_program.hpp"
+#include "gfx/gl_texture_host.hpp"
 #include "gfx/image.hpp"
+#include "audio/mixer.hpp"
 #include "viewer/handler.hpp"
-#include "viewer/text_viewer.hpp"
-#include "viewer/text_viewer.hpp"
+#include "viewer/registry.hpp"
 #include "viewer/viewer.hpp"
 #include "gfx/renderer.hpp"
 #include "manifest.hpp"
@@ -38,9 +39,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../third_party/stb/stb_image_write.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -146,58 +149,6 @@ class Recorder
 
 } // namespace
 
-namespace
-{
-
-// A handler that only claims extensions, so the preview shows which files "open" (vivid icons).
-class DemoHandler final : public hui::viewer::FileHandler
-{
-  public:
-    DemoHandler(const char *id, const char *verb, hui::viewer::IconKind icon,
-                std::initializer_list<const char *> exts)
-        : id_(id), verb_(verb), icon_(icon), exts_(exts.begin(), exts.end())
-    {
-    }
-    const char *id() const override
-    {
-        return id_;
-    }
-    const char *label() const override
-    {
-        return id_;
-    }
-    const char *verb() const override
-    {
-        return verb_;
-    }
-    hui::viewer::IconKind icon() const override
-    {
-        return icon_;
-    }
-    hui::viewer::Match match(const hui::viewer::FileProbe &probe) const override
-    {
-        for (const std::string &ext : exts_)
-        {
-            if (probe.ext() == ext)
-                return hui::viewer::Match::extension;
-        }
-        return hui::viewer::Match::none;
-    }
-    std::unique_ptr<hui::viewer::Viewer> open(hui::viewer::ViewerContext &,
-                                              const hui::viewer::FileRef &) const override
-    {
-        return nullptr;
-    }
-
-  private:
-    const char *id_;
-    const char *verb_;
-    hui::viewer::IconKind icon_;
-    std::vector<std::string> exts_;
-};
-
-} // namespace
-
 int main(int argc, char **argv)
 {
     if (argc < 3)
@@ -261,8 +212,30 @@ int main(int argc, char **argv)
     const std::string stick = demo_root + "/mnt/usb0";
     for (const char *folder : {"Games", "Music", "Backups"})
         hui::save::ensure_directory(stick + "/" + folder);
-    for (const char *name : {"movie.mkv", "setup.zip", "cover.jpg", "mix.mp3"})
+    // Files from earlier versions of this demo would sit in the list and move the rows.
+    for (const char *name : {"cover.jpg", "mix.mp3"})
+        std::remove((stick + "/" + name).c_str());
+    for (const char *name : {"movie.mkv", "setup.zip"})
         hui::save::write_atomic(stick + "/" + name, std::string(5000, 'y'));
+    // Real pictures, songs and a playlist (host/demo), and a binary file for the hex view.
+    for (const char *name : {"sunrise.jpg", "texture.dds", "evening-light.mp3", "morning-walk.mp3",
+                             "family.m3u"})
+    {
+        std::string bytes;
+        if (!hui::save::read_file(assets + "/../host/demo/" + name, &bytes, 64u << 20))
+        {
+            std::fprintf(stderr, "missing demo file host/demo/%s\n", name);
+            return 1;
+        }
+        hui::save::write_atomic(stick + "/" + name, bytes);
+    }
+    {
+        std::string blob = "EliVier\0\1\2\3 demo file: header, then bytes.\n";
+        blob.resize(4096);
+        for (std::size_t i = 64; i < blob.size(); ++i)
+            blob[i] = static_cast<char>((i * 37 + (i >> 5)) & 0xff);
+        hui::save::write_atomic(stick + "/firmware.bin", blob);
+    }
     {
         // A text file with box drawing, accents and tabs: what the text viewer is for.
         std::string todo = "# To do\n\n";
@@ -277,15 +250,10 @@ int main(int argc, char **argv)
     hui::save::write_atomic(
         stick + "/a-really-long-file-name-that-will-not-fit-in-the-column-of-this-list.png",
         std::string(3000, 'z'));
-    static hui::viewer::HandlerRegistry demo_registry;
-    demo_registry.add(std::make_unique<hui::viewer::TextHandler>());
-    demo_registry.add(
-        std::make_unique<DemoHandler>("Image", "View image", hui::viewer::IconKind::image,
-                                      std::initializer_list<const char *>{"png", "jpg"}));
-    demo_registry.add(
-        std::make_unique<DemoHandler>("Sound", "Play", hui::viewer::IconKind::audio,
-                                      std::initializer_list<const char *>{"mp3", "ogg"}));
-    hui::concepts::set_explorer_registry(&demo_registry);
+    static hui::gfx::GlTextureHost texture_host;
+    static hui::audio::Mixer mixer;
+    hui::concepts::set_explorer_registry(&hui::viewer::default_registry());
+    hui::concepts::set_explorer_services(&texture_host, &mixer);
     hui::concepts::set_explorer_start(browse, stick);
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::demo::Catalog catalog;
@@ -449,6 +417,13 @@ int main(int argc, char **argv)
         telemetry.draw_calls = renderer.last_draw_calls();
         telemetry.instances = renderer.last_instances();
         shell.update(input, kDt);
+        {
+            std::int16_t out[800 * 2]; // one frame of sound: what the speakers would take
+            mixer.render(out, 800);
+        }
+        // The tour runs faster than real time; a picture or song decoded on the worker needs a
+        // few real milliseconds, so every frame gives it a little.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
         ++frames;
         if (!tour.capture().empty())
         {

@@ -28,6 +28,7 @@ std::string trimmed(const std::string &s)
 
 std::string normalize_path(const std::string &path)
 {
+    const bool absolute = !path.empty() && path[0] == '/';
     std::vector<std::string> parts;
     std::size_t at = 0;
     while (at <= path.size())
@@ -47,8 +48,8 @@ std::string normalize_path(const std::string &path)
     }
     std::string out;
     for (const std::string &part : parts)
-        out += "/" + part;
-    return out.empty() ? "/" : out;
+        out += (out.empty() && !absolute ? "" : "/") + part;
+    return out.empty() ? (absolute ? "/" : ".") : out;
 }
 
 std::vector<PlaylistEntry> parse_m3u(const std::string &text, const std::string &base_dir)

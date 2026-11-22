@@ -4,6 +4,9 @@
 
 #pragma once
 
-#define STBI_ONLY_PNG 1
+#define STBI_NO_HDR 1
+#define STBI_NO_PSD 1
+#define STBI_NO_PIC 1
+#define STBI_NO_PNM 1
 #define STBI_NO_STDIO 1
 #include "stb_image.inc"

@@ -213,7 +213,9 @@ void HexViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &ar
 {
     const ui::Theme &look = paint.theme();
     const ui::FontRef &mono = canvas.fonts.mono;
-    const float advance = mono.font != nullptr ? mono.font->measure("0", kTextSize) : advance_;
+    if (mono.font == nullptr)
+        return; // no monospace face to draw with
+    const float advance = mono.font->measure("0", kTextSize);
     if (size_ == 0)
     {
         paint.body("This file is empty", area.x, area.y + 40.0f, 26.0f, paint.page_text_muted());

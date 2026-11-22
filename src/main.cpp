@@ -21,6 +21,7 @@
 #include "explorer/trace.hpp"
 #include "concepts/concepts.hpp"
 #include "gfx/canvas.hpp"
+#include "gfx/gl_texture_host.hpp"
 #include "gfx/image.hpp"
 #include "gfx/renderer.hpp"
 #include "platform/ps5/audio_out.hpp"
@@ -248,7 +249,8 @@ int main()
 
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
-    hui::concepts::set_explorer_services(nullptr, &mixer);
+    hui::gfx::GlTextureHost texture_host;
+    hui::concepts::set_explorer_services(&texture_host, &mixer);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");

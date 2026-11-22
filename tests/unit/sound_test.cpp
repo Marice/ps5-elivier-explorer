@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "concept_fixture.hpp"
+#include "fake_textures.hpp"
 
 #include "audio/decoder.hpp"
 #include "audio/mixer.hpp"
@@ -417,6 +418,7 @@ class SoundViewerTest : public ConceptFixture
         ViewerContext context;
         context.fonts = &fonts_;
         context.mixer = &mixer_;
+        context.textures = &textures_;
         return std::make_unique<SoundViewer>("test.mp3", &source_, std::move(tracks), context);
     }
     void send_input(Viewer &viewer, const hui::InputFrame &input, float dt = 1.0f / 60.0f)
@@ -426,6 +428,7 @@ class SoundViewerTest : public ConceptFixture
     }
 
     Mixer mixer_;
+    hui::testing::FakeTextures textures_;
     hui::explorer::LocalSource source_;
 };
 
@@ -452,6 +455,20 @@ TEST_F(SoundViewerTest, PlaysAndTogglesPauseWithCross)
     EXPECT_TRUE(viewer->player()->paused());
     send_input(*viewer, press(hui::Action::confirm));
     EXPECT_FALSE(viewer->player()->paused());
+}
+
+TEST_F(SoundViewerTest, TheAlbumPictureBecomesATextureAndIsGivenBackOnClose)
+{
+    const auto viewer = viewer_of({kStereo, kMono});
+    EXPECT_EQ(textures_.created, 1); // the first song has a picture
+    EXPECT_EQ(textures_.last_width, 300);
+    send_input(*viewer, press(hui::Action::page_next)); // the second has none: the first is let go
+    EXPECT_EQ(textures_.created, 1);
+    EXPECT_TRUE(textures_.live.empty());
+    send_input(*viewer, press(hui::Action::page_prev));
+    EXPECT_EQ(textures_.live.size(), 1u);
+    viewer->close();
+    EXPECT_TRUE(textures_.live.empty());
 }
 
 TEST_F(SoundViewerTest, CircleStopsTheMusicAndCloses)

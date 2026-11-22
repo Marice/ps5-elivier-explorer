@@ -4,6 +4,7 @@
 #include "viewer/registry.hpp"
 
 #include "viewer/hex_viewer.hpp"
+#include "viewer/image_viewer.hpp"
 #include "viewer/sound_viewer.hpp"
 #include "viewer/text_viewer.hpp"
 
@@ -16,6 +17,7 @@ const HandlerRegistry &default_registry()
     {
         HandlerRegistry built;
         // Image, hex and sound handlers are added here as they are written.
+        built.add(std::make_unique<ImageHandler>());
         built.add(std::make_unique<SoundHandler>());
         built.add(std::make_unique<TextHandler>());
         built.add(std::make_unique<HexHandler>());

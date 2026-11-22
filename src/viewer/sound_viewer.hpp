@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // MP3 for now (a decoder per format plugs into audio/decoder.hpp). A .m3u file opens as a list of
-// songs played in order. The music stops when the viewer closes. Tags (title, artist) are shown;
-// the picture in the tag is read too, for when pictures can be drawn.
+// songs played in order. The music stops when the viewer closes. Tags (title, artist) and the
+// picture in the tag (JPEG or PNG) are shown.
 //
 //   Cross  play / pause (again from the start when it has ended)
 //   D-pad left/right  10 seconds back / forward      D-pad up/down  volume
@@ -72,6 +72,12 @@ class SoundViewer final : public Viewer
     std::string name_;
     hui::explorer::Source *source_;
     std::vector<PlaylistEntry> tracks_;
+    TextureHost *textures_ = nullptr;
+    std::uint32_t cover_ = 0; // the picture of the song playing, 0 when it has none
+    int cover_width_ = 0;
+    int cover_height_ = 0;
+    void load_cover();
+    void drop_cover();
     std::unique_ptr<hui::audio::AudioPlayer> player_;
     int index_ = 0;
     std::string error_;

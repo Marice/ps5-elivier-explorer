@@ -5,6 +5,7 @@
 
 #include "audio/mixer.hpp"
 #include "explorer/source.hpp"
+#include "gfx/decode_image.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -18,6 +19,7 @@ namespace
 constexpr float kSeekStep = 10.0f;     // seconds per D-pad press
 constexpr float kSeekInterval = 0.12f; // seconds between seeks while the D-pad is held
 constexpr float kRowHeight = 36.0f;
+constexpr float kCoverSize = 240.0f; // the album picture's box
 
 std::string file_name(const std::string &path)
 {
@@ -56,7 +58,8 @@ std::string format_clock(double seconds)
 
 SoundViewer::SoundViewer(std::string name, hui::explorer::Source *source,
                          std::vector<PlaylistEntry> tracks, const ViewerContext &context)
-    : name_(std::move(name)), source_(source), tracks_(std::move(tracks))
+    : name_(std::move(name)), source_(source), tracks_(std::move(tracks)),
+      textures_(context.textures)
 {
     if (context.mixer == nullptr)
     {
@@ -82,6 +85,31 @@ void SoundViewer::close()
     if (player_)
         player_->stop();
     playing_ = false;
+    drop_cover();
+}
+
+void SoundViewer::drop_cover()
+{
+    if (cover_ != 0 && textures_ != nullptr)
+        textures_->destroy(cover_);
+    cover_ = 0;
+}
+
+// The tag's picture as a texture; a picture that cannot be decoded is left out.
+void SoundViewer::load_cover()
+{
+    drop_cover();
+    if (textures_ == nullptr || !player_ || player_->decoder() == nullptr)
+        return;
+    const hui::audio::CoverArt &art = player_->decoder()->cover();
+    if (art.data.empty())
+        return;
+    gfx::ImageData image;
+    if (!gfx::decode_image(art.data, &image, nullptr))
+        return;
+    cover_ = textures_->create(image.width, image.height, image.rgba.data());
+    cover_width_ = image.width;
+    cover_height_ = image.height;
 }
 
 void SoundViewer::play(int index, int step)
@@ -109,6 +137,7 @@ void SoundViewer::play(int index, int step)
         if (decoder)
         {
             player_->start(std::move(decoder));
+            load_cover();
             playing_ = true;
             error_.clear();
             return;
@@ -207,18 +236,33 @@ void SoundViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     const ui::FontRef &regular = canvas.fonts.regular;
     const ui::FontRef &mono = canvas.fonts.mono;
 
+    // The picture on the left, when the song has one; everything else moves right of it.
+    float left = 0.0f;
+    if (cover_ != 0 && cover_width_ > 0 && cover_height_ > 0)
+    {
+        const float box = kCoverSize;
+        const float scale = std::min(box / static_cast<float>(cover_width_),
+                                     box / static_cast<float>(cover_height_));
+        const float w = static_cast<float>(cover_width_) * scale;
+        const float h = static_cast<float>(cover_height_) * scale;
+        canvas.list.image(cover_, {area.x + (box - w) / 2.0f, area.y + (box - h) / 2.0f, w, h},
+                          gfx::kFullUv, {1.0f, 1.0f, 1.0f, 1.0f}, 10.0f);
+        left = box + 40.0f;
+    }
+    const float x = area.x + left;
+    const float width = area.w - left;
+
     // What is playing: the tag's title and artist, or the file name.
     const PlaylistEntry &entry = tracks_[static_cast<std::size_t>(index_)];
     std::string heading = !song.title().empty()  ? song.title()
                           : !entry.title.empty() ? entry.title
                                                  : file_name(entry.path);
-    ui::text(canvas.list, regular, fit(regular, heading, 46.0f, area.w), area.x, area.y + 56.0f,
-             46.0f, look.text);
+    ui::text(canvas.list, regular, fit(regular, heading, 46.0f, width), x, area.y + 56.0f, 46.0f,
+             look.text);
     if (!song.artist().empty())
-        ui::text(canvas.list, regular, fit(regular, song.artist(), 30.0f, area.w), area.x,
+        ui::text(canvas.list, regular, fit(regular, song.artist(), 30.0f, width), x,
                  area.y + 104.0f, 30.0f, look.text_muted);
-    ui::text(canvas.list, regular, song.description(), area.x, area.y + 144.0f, 22.0f,
-             look.text_muted);
+    ui::text(canvas.list, regular, song.description(), x, area.y + 144.0f, 22.0f, look.text_muted);
 
     // Time and a progress bar.
     const double length = player_->duration();
@@ -226,8 +270,8 @@ void SoundViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     std::string clock = format_clock(at);
     if (length > 0.0)
         clock += " / " + format_clock(length);
-    ui::text(canvas.list, mono, clock, area.x, area.y + 222.0f, 40.0f, look.text);
-    const gfx::Rect bar{area.x, area.y + 246.0f, area.w, 14.0f};
+    ui::text(canvas.list, mono, clock, x, area.y + 222.0f, 40.0f, look.text);
+    const gfx::Rect bar{x, area.y + 246.0f, width, 14.0f};
     canvas.list.rounded_rect(bar, 7.0f, look.surface_high);
     if (length > 0.0)
     {
@@ -240,9 +284,9 @@ void SoundViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     const char *state = player_->finished() ? "Ended" : player_->paused() ? "Paused" : "Playing";
     char line[120];
     std::snprintf(line, sizeof(line), "%s     Volume %d of 10", state, player_->volume());
-    ui::text(canvas.list, regular, line, area.x, area.y + 300.0f, 24.0f, paint.page_text_muted());
+    ui::text(canvas.list, regular, line, x, area.y + 300.0f, 24.0f, paint.page_text_muted());
     if (!error_.empty())
-        ui::text(canvas.list, regular, error_, area.x, area.y + 332.0f, 22.0f, look.text_muted);
+        ui::text(canvas.list, regular, error_, x, area.y + 332.0f, 22.0f, look.text_muted);
 
     // The playlist: the songs around this one.
     if (tracks_.size() > 1)

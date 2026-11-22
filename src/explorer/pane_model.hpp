@@ -45,7 +45,9 @@ struct PaneState
     bool truncated = false;            // entries holds only the first kPaneRowCap
     int total_entries = 0;             // what the folder really holds
     SpaceInfo space;                   // the drive this folder is on, read when it was listed
-    int list_error = 0;                // errno of the last listing that failed, else 0
+    // Whether things may be changed here: allowed by guard.hpp, and no link in the path.
+    bool changeable = false;
+    int list_error = 0; // errno of the last listing that failed, else 0
 };
 
 class PaneModel

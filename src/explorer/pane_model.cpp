@@ -196,6 +196,7 @@ bool PaneModel::list_into(const std::string &path, const std::string &focus_name
     const bool same_folder = state_.path == path;
     state_.path = path;
     state_.space = source_.space(path);
+    state_.changeable = !is_protected_folder(path) && source_.is_plain_path(path);
     state_.total_entries = static_cast<int>(listing.entries.size());
     sort_entries(&listing.entries);
     state_.truncated = listing.entries.size() > static_cast<std::size_t>(kPaneRowCap);
@@ -357,7 +358,7 @@ int PaneModel::make_folder(const std::string &name)
 {
     if (const int bad = check_name(name))
         return bad;
-    if (is_protected_folder(state_.path))
+    if (!state_.changeable)
         return EPERM;
     const std::string path = join(state_.path, name);
     Entry existing;
@@ -378,7 +379,7 @@ int PaneModel::rename_entry(const std::string &from, const std::string &to)
         return bad;
     if (from == to)
         return 0;
-    if (is_protected_folder(state_.path))
+    if (!state_.changeable)
         return EPERM;
     const std::string target = join(state_.path, to);
     Entry existing;

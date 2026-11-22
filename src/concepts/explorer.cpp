@@ -103,6 +103,11 @@ constexpr app::TourStep kTour[] = {
 };
 
 constexpr float kHeaderHeight = 100.0f; // a pane's path and facts, above its table
+// The Files screen has no title block (it is the only screen): the panes start near the top and
+// end just above the hint row.
+constexpr float kProgressTop = 24.0f; // the panel a running job draws over the top of the panes
+constexpr float kPanesTop = 36.0f;
+constexpr float kPanesBottom = 962.0f;
 
 const hui::viewer::HandlerRegistry *g_registry = nullptr;
 hui::viewer::TextureHost *g_textures = nullptr;
@@ -150,7 +155,9 @@ const char *describe_error(int error)
     case ENAMETOOLONG:
         return "That name is too long";
     case EPERM:
-        return "That folder is protected";
+        return "Changes are only allowed in /data and on drives";
+    case EXDEV:
+        return "Another drive is mounted in there";
     case EACCES:
         return "No permission here";
     case EROFS:
@@ -379,8 +386,8 @@ class PaneView
             std::string sorted = line;
             if (!state.selected.empty())
                 sorted += "   -   " + std::to_string(state.selected.size()) + " marked";
-            if (hui::explorer::is_protected_folder(state.path))
-                sorted += "   -   protected: can be read and copied from, not changed";
+            if (!state.changeable)
+                sorted += "   -   read only here: changes are allowed in /data and on drives";
             paint.body(sorted, x, area_.y + 80.0f, 18.0f, paint.page_text_muted());
         }
         table.draw(canvas);
@@ -496,7 +503,7 @@ class ExplorerScreen final : public app::Concept
         split_.style.theme = look;
         split_.style.ratio = 0.5f;
         split_.style.gap = 40.0f;
-        split_.set_bounds({kMargin, kTop, kRight - kMargin, kBottom - kTop});
+        split_.set_bounds({kMargin, kPanesTop, kRight - kMargin, kPanesBottom - kPanesTop});
         split_.set_focus(0, true);
         for (int i = 0; i < 2; ++i)
             panes_[i].layout(split_.pane_rect(i));
@@ -525,10 +532,10 @@ class ExplorerScreen final : public app::Concept
         cancel_hold_.style.text_size = 20.0f;
         cancel_hold_.label = "Cancel";
         cancel_hold_.hint = "Keep holding";
-        cancel_hold_.set_bounds({kRight - 280.0f, 236.0f, 280.0f, 44.0f});
+        cancel_hold_.set_bounds({kRight - 300.0f, kProgressTop + 16.0f, 280.0f, 44.0f});
         cancel_hold_.set_active(true);
         bar_.style.theme = look;
-        bar_.set_bounds({kMargin, 268.0f, kRight - kMargin - 320.0f, 10.0f});
+        bar_.set_bounds({kMargin + 24.0f, kProgressTop + 50.0f, kRight - kMargin - 350.0f, 10.0f});
     }
 
     // A job still running when the app closes is told to stop, then the worker is joined.
@@ -677,9 +684,6 @@ class ExplorerScreen final : public app::Concept
             frame.scene.pop_opacity();
             return;
         }
-        draw_header(paint, "Files", "Browse and manage the console's drives");
-        if (job_active_)
-            draw_progress(paint, canvas);
         split_.draw(canvas);
         for (int i = 0; i < 2; ++i)
         {
@@ -687,6 +691,8 @@ class ExplorerScreen final : public app::Concept
             panes_[i].draw(paint, canvas);
             split_.end_pane(canvas, i);
         }
+        if (job_active_)
+            draw_progress(top);
         if (confirm_delete_)
             draw_delete_panel(frame, top);
         menu_.draw(top);
@@ -762,17 +768,24 @@ class ExplorerScreen final : public app::Concept
         return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
     }
 
-    void draw_progress(ui::Painter &paint, ui::Canvas &canvas) const
+    // A panel over the top of the panes (there is no room above them any more): what is running,
+    // how far, and the hold that stops it.
+    void draw_progress(ui::Canvas &top) const
     {
+        const ui::Theme &look = theme();
+        ui::Painter paint(top.list, context_.fonts, look);
+        const Rect panel{kMargin, kProgressTop, kRight - kMargin, 76.0f};
+        top.list.shadow(panel, look.radius_card, 24.0f, Color::rgb(0x000000, 0.25f));
+        paint.surface(panel, look.radius_card, look.surface, look.outline, 1.0f);
         char line[200];
         std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s", verb(snap_.kind, false),
                       snap_.files_done, snap_.files_total, size_text(snap_.bytes_done).c_str(),
                       size_text(snap_.bytes_total).c_str());
-        const float width = kRight - kMargin - 320.0f;
-        paint.body(ui::fit_body(paint, line, 20.0f, width), kMargin, 252.0f, 20.0f,
-                   paint.page_text());
-        bar_.draw(canvas);
-        cancel_hold_.draw(canvas);
+        const float width = kRight - kMargin - 350.0f;
+        paint.body(ui::fit_body(paint, line, 20.0f, width), kMargin + 24.0f, kProgressTop + 34.0f,
+                   20.0f, look.text);
+        bar_.draw(top);
+        cancel_hold_.draw(top);
     }
 
     void draw_delete_panel(const app::Frame &frame, ui::Canvas &top) const
@@ -1005,12 +1018,12 @@ class ExplorerScreen final : public app::Concept
             feedback.play(audio::Cue::error);
             return;
         }
-        if ((kind != JobKind::copy &&
-             hui::explorer::is_protected_folder(from.model.state().path)) ||
-            hui::explorer::is_protected_folder(to.model.state().path))
+        if ((kind != JobKind::copy && !from.model.state().changeable) ||
+            !to.model.state().changeable)
         {
-            toasts_.push(ui::StatusKind::warning, "That folder is protected",
-                         "It can be read and copied from, but nothing is changed in it");
+            toasts_.push(ui::StatusKind::warning, "Changes are not allowed there",
+                         "Only /data and the drives (usb, ext) can be changed. Anywhere else "
+                         "can be read and copied from.");
             return;
         }
         if (kind == JobKind::move && from.model.state().path == to.model.state().path)
@@ -1027,10 +1040,10 @@ class ExplorerScreen final : public app::Concept
         const std::vector<std::string> names = panes_[active].picked();
         if (names.empty())
             return;
-        if (hui::explorer::is_protected_folder(panes_[active].model.state().path))
+        if (!panes_[active].model.state().changeable)
         {
-            toasts_.push(ui::StatusKind::warning, "That folder is protected",
-                         "Nothing can be deleted in it");
+            toasts_.push(ui::StatusKind::warning, "Nothing can be deleted here",
+                         "Only /data and the drives (usb, ext) can be changed");
             return;
         }
         delete_names_ = names;

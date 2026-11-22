@@ -56,11 +56,19 @@ class Engine
             fail(ENOTSUP, plan_.to_dir);
             fatal_ = true;
         }
-        // Reading and copying from a protected folder is fine; changing one is not (guard.hpp).
-        if ((plan_.kind != JobKind::copy && is_protected_folder(plan_.from_dir)) ||
-            (plan_.kind != JobKind::remove && is_protected_folder(plan_.to_dir)))
+        // Reading and copying out of a folder is fine anywhere; changing one (deleting or moving
+        // away from it, copying or moving into it) only where guard.hpp allows, and not through a
+        // link.
+        const bool changes_source = plan_.kind != JobKind::copy;
+        const bool changes_target = plan_.kind != JobKind::remove;
+        if (changes_source && !may_change(from_, plan_.from_dir))
         {
-            fail(EPERM, is_protected_folder(plan_.from_dir) ? plan_.from_dir : plan_.to_dir);
+            fail(EPERM, plan_.from_dir);
+            fatal_ = true;
+        }
+        else if (changes_target && !may_change(to_, plan_.to_dir))
+        {
+            fail(EPERM, plan_.to_dir);
             fatal_ = true;
         }
         move_fast_ = plan_.kind == JobKind::move && from_.same_kind(to_) &&
@@ -92,6 +100,12 @@ class Engine
     }
 
   private:
+    // The name is in the allow-list and no part of the path is a link (a link can lead anywhere).
+    static bool may_change(const Source &source, const std::string &folder)
+    {
+        return !is_protected_folder(folder) && source.is_plain_path(folder);
+    }
+
     bool aborted()
     {
         if (fatal_)
@@ -202,9 +216,9 @@ class Engine
             remove_item(src, entry);
             return;
         }
-        if (entry.kind == EntryKind::other)
+        if (entry.is_link || entry.kind == EntryKind::other)
         {
-            count_skipped(); // a device or a broken link is not something to copy
+            count_skipped(); // a link is neither followed nor copied; nor is a device
             return;
         }
         const bool same_dir = path_normalized(src_dir) == path_normalized(dst_dir);
@@ -385,8 +399,25 @@ class Engine
 
     void remove_item(const std::string &path, const Entry &entry)
     {
+        if (entry.is_link)
+        {
+            // The link itself goes; what it points at is never touched, not even looked at.
+            set_current(path);
+            const int error = from_.remove_file(path);
+            if (error != 0)
+                fail(error, path);
+            else
+                count_done(1, 0);
+            return;
+        }
         if (entry.kind == EntryKind::directory)
         {
+            // Another drive mounted here is not ours to empty (as rm -x): refuse, and go on.
+            if (!from_.same_device(path_parent(path), path))
+            {
+                fail(EXDEV, path);
+                return;
+            }
             ListResult listing = from_.list(path);
             if (!listing.ok)
             {

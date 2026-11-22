@@ -240,6 +240,44 @@ TEST_F(LocalSourceTest, ARangeOfAMissingFileOrAFolderIsAnError)
     EXPECT_EQ(source_.read_range(root_ + "/dir", 0, buffer, 8), -EISDIR);
 }
 
+TEST_F(LocalSourceTest, ALinkIsMarkedAndTakesItsTargetsKindAndSize)
+{
+    fs::create_symlink(root_ + "/dir", root_ + "/linkdir");
+    fs::create_symlink(root_ + "/dir/a.txt", root_ + "/linkfile");
+    fs::create_symlink(root_ + "/nowhere", root_ + "/dangling");
+    Entry entry;
+    ASSERT_TRUE(source_.stat(root_ + "/linkdir", &entry));
+    EXPECT_TRUE(entry.is_link);
+    EXPECT_EQ(entry.kind, EntryKind::directory);
+    ASSERT_TRUE(source_.stat(root_ + "/linkfile", &entry));
+    EXPECT_TRUE(entry.is_link);
+    EXPECT_EQ(entry.kind, EntryKind::file);
+    EXPECT_EQ(entry.size, 5u);
+    ASSERT_TRUE(source_.stat(root_ + "/dangling", &entry)); // it is there, though it leads nowhere
+    EXPECT_TRUE(entry.is_link);
+    EXPECT_EQ(entry.kind, EntryKind::other);
+    ASSERT_TRUE(source_.stat(root_ + "/dir/a.txt", &entry));
+    EXPECT_FALSE(entry.is_link);
+    const ListResult listing = source_.list(root_);
+    int links = 0;
+    for (const Entry &item : listing.entries)
+        links += item.is_link ? 1 : 0;
+    EXPECT_EQ(links, 3);
+}
+
+TEST_F(LocalSourceTest, APathThroughALinkIsNotPlain)
+{
+    fs::create_symlink(root_ + "/dir", root_ + "/linkdir");
+    EXPECT_TRUE(source_.is_plain_path(root_ + "/dir"));
+    EXPECT_TRUE(source_.is_plain_path(root_ + "/dir/inner"));
+    EXPECT_TRUE(source_.is_plain_path(root_ + "/dir/./inner/"));
+    EXPECT_FALSE(source_.is_plain_path(root_ + "/linkdir"));
+    EXPECT_FALSE(source_.is_plain_path(root_ + "/linkdir/inner")); // a link earlier in the path
+    EXPECT_FALSE(source_.is_plain_path(root_ + "/nowhere"));       // cannot be read: not trusted
+    EXPECT_FALSE(source_.is_plain_path("relative/path"));
+    EXPECT_FALSE(source_.is_plain_path(""));
+}
+
 TEST_F(LocalSourceTest, KnowsWhetherTwoPathsAreOnTheSameDevice)
 {
     EXPECT_TRUE(source_.same_device(root_ + "/dir", root_ + "/dir/inner"));

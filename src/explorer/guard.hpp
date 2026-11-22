@@ -1,42 +1,52 @@
-// EliVier Explorer - Folders the explorer will not change: the console's own files.
+// EliVier Explorer - Where the explorer may change things: /data and the drives, nowhere else.
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The app runs as root, so one wrong delete in /system could end the console. A protected folder
-// can be read and copied from, never changed: nothing is renamed, made, deleted or written in it.
-// Checked in the copy engine and the pane model themselves, so no screen can forget it.
+// The app runs as root, so one wrong delete in /system could end the console. Reading and copying
+// from any folder is fine; changing one is only allowed in an allow-list, so a folder nobody
+// thought of is protected by default. "Changing" is everything that writes or removes: delete, move
+// away, rename, new folder, copy into, and later editing a file.
 //
-// Protected: "/" and "/mnt" (what is in them is system folders and mount points); everything
-// inside /system, /system_data, /system_ex, /preinst, /preinst2, /boot, /dev and /rescue; and the
-// mounts under /mnt that are not drives (anything but usbN and extN).
+// Allowed: /data and everything in it, and the drives: /mnt/usbN and /mnt/extN and everything in
+// them. Not allowed: all the rest, including "/", "/mnt" (the mount points themselves), /data's own
+// entry in "/", /user, /download0, /tmp and the system folders.
+//
+// This is by name. Two things a name cannot see are handled where the work is done: a symbolic link
+// is never followed when deleting, and a path that goes through one counts as protected (see
+// Source::is_plain_path); a directory on another device than its parent is not deleted through.
+//
+// Checked in the copy engine and the pane model themselves, so no screen can forget it.
 
 #pragma once
 
 #include "explorer/path.hpp"
 
 #include <string>
+#include <vector>
 
 namespace hui::explorer
 {
 
+class ChangePolicy
+{
+  public:
+    // Whether `folder` is a place where things may be changed.
+    bool allows(const std::string &folder) const;
+
+    // More folders that are allowed (tests, with a temporary folder); not part of the console's
+    // rules.
+    void allow_also(std::string root);
+    void clear_extra();
+
+  private:
+    std::vector<std::string> extra_;
+};
+
+// The policy the app uses.
+ChangePolicy &change_policy();
+
 inline bool is_protected_folder(const std::string &folder)
 {
-    const std::string path = path_normalized(folder);
-    if (path == "/" || path == "/mnt")
-        return true;
-    static const char *const kTrees[] = {"/system",   "/system_data", "/system_ex", "/preinst",
-                                         "/preinst2", "/boot",        "/dev",       "/rescue"};
-    for (const char *tree : kTrees)
-    {
-        if (path_is_inside(path, tree))
-            return true;
-    }
-    if (path_is_inside(path, "/mnt"))
-    {
-        const std::string rest = path.substr(5); // after "/mnt/"
-        const std::string first = rest.substr(0, rest.find('/'));
-        return first.rfind("usb", 0) != 0 && first.rfind("ext", 0) != 0;
-    }
-    return false;
+    return !change_policy().allows(folder);
 }
 
 } // namespace hui::explorer

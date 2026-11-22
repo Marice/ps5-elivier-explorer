@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include "explorer/guard.hpp"
+
 #include <algorithm>
 #include <cerrno>
 #include <filesystem>
@@ -46,6 +48,7 @@ class PaneModelTest : public ::testing::Test
                   std::string(::testing::UnitTest::GetInstance()->current_test_info()->name())))
                     .string();
         fs::remove_all(root_);
+        hui::explorer::change_policy().allow_also(root_);
         fs::create_directories(root_ + "/beta");
         fs::create_directories(root_ + "/Alpha");
         write_file(root_ + "/file10.txt", 10);
@@ -55,6 +58,7 @@ class PaneModelTest : public ::testing::Test
     }
     void TearDown() override
     {
+        hui::explorer::change_policy().clear_extra();
         fs::remove_all(root_);
     }
     std::string root_;
@@ -236,6 +240,25 @@ TEST_F(PaneModelTest, AProtectedFolderCanBeBrowsedButNotChanged)
     EXPECT_EQ(pane.make_folder("elivier-test"), EPERM);
     ASSERT_FALSE(pane.state().entries.empty());
     EXPECT_EQ(pane.rename_entry(pane.state().entries[0].name, "elivier-test"), EPERM);
+}
+
+TEST_F(PaneModelTest, OnlyWhereChangesAreAllowedThePaneSaysSo)
+{
+    PaneModel pane(source_);
+    ASSERT_TRUE(pane.go_to(root_));
+    EXPECT_TRUE(pane.state().changeable);
+    ASSERT_TRUE(pane.go_to("/dev"));
+    EXPECT_FALSE(pane.state().changeable);
+}
+
+TEST_F(PaneModelTest, AFolderReachedThroughALinkCannotBeChanged)
+{
+    fs::create_symlink(root_ + "/beta", root_ + "/viathelink");
+    PaneModel pane(source_);
+    ASSERT_TRUE(pane.go_to(root_ + "/viathelink")); // it can be browsed
+    EXPECT_FALSE(pane.state().changeable);
+    EXPECT_EQ(pane.make_folder("new"), EPERM);
+    EXPECT_FALSE(fs::exists(root_ + "/beta/new"));
 }
 
 TEST_F(PaneModelTest, EntryKindsAreKept)

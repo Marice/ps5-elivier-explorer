@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include "explorer/guard.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -46,6 +48,7 @@ class ScriptedSource final : public Source
     bool one_device = true;
     std::function<int(const std::string &from, const std::string &to)> copy_hook;
     std::function<SpaceInfo(const std::string &path)> space_hook;
+    std::function<bool(const std::string &a, const std::string &b)> device_hook;
     std::atomic<int> copies{0};
 
     std::string display_name() const override
@@ -96,8 +99,14 @@ class ScriptedSource final : public Source
         }
         return real_.copy_file(a, b, chunk, on_progress);
     }
+    bool is_plain_path(const std::string &p) const override
+    {
+        return real_.is_plain_path(p);
+    }
     bool same_device(const std::string &a, const std::string &b) const override
     {
+        if (device_hook)
+            return device_hook(a, b);
         return one_device && real_.same_device(a, b);
     }
     const void *kind_tag() const override
@@ -121,9 +130,12 @@ class CopyJobTest : public ::testing::Test
         fs::remove_all(root_);
         fs::create_directories(root_ + "/from");
         fs::create_directories(root_ + "/to");
+        // The console only lets /data and the drives be changed; this test's folder is allowed too.
+        change_policy().allow_also(root_);
     }
     void TearDown() override
     {
+        change_policy().clear_extra();
         fs::remove_all(root_);
     }
 
@@ -532,6 +544,90 @@ TEST_F(CopyJobTest, CopyingOutOfAProtectedFolderIsFine)
     const CopyProgress result = run(out);
     EXPECT_EQ(result.state, JobState::done);
     EXPECT_EQ(result.last_error, ENOENT);
+}
+
+TEST_F(CopyJobTest, DeletingALinkRemovesTheLinkAndNeverWhatItPointsAt)
+{
+    write_file(root_ + "/outside/precious.txt", "precious");
+    write_file(root_ + "/outside/deeper/more.txt", "more");
+    fs::create_symlink(root_ + "/outside", root_ + "/from/pointer");
+    const CopyProgress result = run(plan(JobKind::remove, {"pointer"}));
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_FALSE(fs::is_symlink(root_ + "/from/pointer")); // the link is gone
+    EXPECT_EQ(read_all(root_ + "/outside/precious.txt"), "precious");
+    EXPECT_EQ(read_all(root_ + "/outside/deeper/more.txt"), "more");
+}
+
+TEST_F(CopyJobTest, ALinkInsideAFolderThatIsDeletedIsUnlinkedNotFollowed)
+{
+    write_file(root_ + "/outside/precious.txt", "precious");
+    write_file(root_ + "/from/pack/own.txt", "own");
+    fs::create_symlink(root_ + "/outside", root_ + "/from/pack/pointer");
+    const CopyProgress result = run(plan(JobKind::remove, {"pack"}));
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_FALSE(fs::exists(root_ + "/from/pack"));
+    EXPECT_EQ(read_all(root_ + "/outside/precious.txt"), "precious");
+}
+
+TEST_F(CopyJobTest, ADanglingLinkCanBeDeleted)
+{
+    fs::create_symlink(root_ + "/nowhere", root_ + "/from/dangling");
+    const CopyProgress result = run(plan(JobKind::remove, {"dangling"}));
+    EXPECT_EQ(result.failed, 0);
+    EXPECT_FALSE(fs::is_symlink(root_ + "/from/dangling"));
+}
+
+TEST_F(CopyJobTest, LinksAreNotCopiedOrMoved)
+{
+    write_file(root_ + "/outside/big.txt", "target content");
+    fs::create_symlink(root_ + "/outside", root_ + "/from/pointer");
+    fs::create_symlink(root_ + "/outside/big.txt", root_ + "/from/filelink");
+    CopyProgress result = run(plan(JobKind::copy, {"pointer", "filelink"}));
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_EQ(result.skipped, 2);
+    EXPECT_FALSE(fs::exists(root_ + "/to/pointer"));
+    EXPECT_FALSE(fs::exists(root_ + "/to/filelink"));
+    result = run(plan(JobKind::move, {"pointer"}));
+    EXPECT_EQ(result.skipped, 1);
+    EXPECT_TRUE(fs::is_symlink(root_ + "/from/pointer")); // left where it was
+}
+
+TEST_F(CopyJobTest, NothingIsChangedInAFolderReachedThroughALink)
+{
+    write_file(root_ + "/real/file.txt", "keep me");
+    fs::create_symlink(root_ + "/real", root_ + "/from/viathelink");
+    CopyPlan remove = plan(JobKind::remove, {"file.txt"});
+    remove.from_dir = root_ + "/from/viathelink";
+    CopyProgress result = run(remove);
+    EXPECT_EQ(result.state, JobState::failed);
+    EXPECT_EQ(result.last_error, EPERM);
+    EXPECT_EQ(read_all(root_ + "/real/file.txt"), "keep me");
+    // Into such a folder is just as refused, though out of one is fine.
+    write_file(root_ + "/from/x.txt", "x");
+    CopyPlan into = plan(JobKind::copy, {"x.txt"});
+    into.to_dir = root_ + "/from/viathelink";
+    EXPECT_EQ(run(into).state, JobState::failed);
+    EXPECT_FALSE(fs::exists(root_ + "/real/x.txt"));
+    write_file(root_ + "/real/y.txt", "y");
+    CopyPlan out = plan(JobKind::copy, {"y.txt"});
+    out.from_dir = root_ + "/from/viathelink";
+    EXPECT_EQ(run(out).state, JobState::done);
+    EXPECT_EQ(read_all(root_ + "/to/y.txt"), "y");
+}
+
+TEST_F(CopyJobTest, ADriveMountedInsideAFolderIsNotDeletedThrough)
+{
+    write_file(root_ + "/from/mounted/inner.txt", "another drive's file");
+    write_file(root_ + "/from/ordinary/own.txt", "own");
+    // The test pretends "mounted" is the root of another device.
+    source_.device_hook = [](const std::string &a, const std::string &b)
+    { return a.find("mounted") == std::string::npos && b.find("mounted") == std::string::npos; };
+    const CopyProgress result = run(plan(JobKind::remove, {"mounted", "ordinary"}));
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_EQ(result.failed, 1);
+    EXPECT_EQ(result.last_error, EXDEV);
+    EXPECT_EQ(read_all(root_ + "/from/mounted/inner.txt"), "another drive's file");
+    EXPECT_FALSE(fs::exists(root_ + "/from/ordinary")); // the rest still went
 }
 
 TEST_F(CopyJobTest, ACancelBeforeItStartsStopsItAtOnce)

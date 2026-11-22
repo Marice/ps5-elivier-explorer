@@ -45,6 +45,39 @@ void fill(Entry *entry, const struct stat &info)
     entry->modified_unix = static_cast<std::int64_t>(info.st_mtime);
 }
 
+// Fills an entry from a path without following a link at the path itself: a link is marked, and
+// takes its kind and size from its target when that can be read (a dangling one is "other").
+// False when even the link cannot be read.
+bool describe(const std::string &path, Entry *entry)
+{
+    struct stat link
+    {
+    };
+    if (::lstat(path.c_str(), &link) != 0)
+        return false;
+    if (!S_ISLNK(link.st_mode))
+    {
+        fill(entry, link);
+        entry->is_link = false;
+        return true;
+    }
+    entry->is_link = true;
+    struct stat target
+    {
+    };
+    if (::stat(path.c_str(), &target) == 0)
+    {
+        fill(entry, target);
+    }
+    else
+    {
+        entry->kind = EntryKind::other;
+        entry->size = 0;
+        entry->modified_unix = static_cast<std::int64_t>(link.st_mtime);
+    }
+    return true;
+}
+
 std::string leaf_of(const std::string &path)
 {
     std::size_t end = path.size();
@@ -100,14 +133,8 @@ ListResult LocalSource::list(const std::string &path) const
             continue;
         Entry entry;
         entry.name = item->d_name;
-        struct stat info
-        {
-        };
-        if (::stat((base + entry.name).c_str(), &info) != 0 &&
-            ::lstat((base + entry.name).c_str(), &info) != 0)
+        if (!describe(base + entry.name, &entry))
             entry.kind = EntryKind::other; // vanished or unreadable: listed, but not touched
-        else
-            fill(&entry, info);
         result.entries.push_back(std::move(entry));
     }
     result.error = errno;
@@ -118,13 +145,10 @@ ListResult LocalSource::list(const std::string &path) const
 
 bool LocalSource::stat(const std::string &path, Entry *out) const
 {
-    struct stat info
-    {
-    };
-    if (::stat(path.c_str(), &info) != 0)
+    // A dangling link is still something that is there (a name taken), so it counts.
+    if (!describe(path, out))
         return false;
     out->name = leaf_of(path);
-    fill(out, info);
     return true;
 }
 
@@ -252,6 +276,32 @@ int LocalSource::copy_file(const std::string &from, const std::string &to, std::
     if (error != 0)
         ::unlink(to.c_str()); // never leave a half-written file behind
     return error;
+}
+
+bool LocalSource::is_plain_path(const std::string &path) const
+{
+    if (path.empty() || path[0] != '/')
+        return false;
+    std::string walked;
+    std::size_t at = 1;
+    while (at <= path.size())
+    {
+        const std::size_t next = path.find('/', at);
+        const std::string part = path.substr(at, next == std::string::npos ? next : next - at);
+        if (!part.empty() && part != ".")
+        {
+            walked += "/" + part;
+            struct stat info
+            {
+            };
+            if (::lstat(walked.c_str(), &info) != 0 || S_ISLNK(info.st_mode))
+                return false;
+        }
+        if (next == std::string::npos)
+            break;
+        at = next + 1;
+    }
+    return true;
 }
 
 bool LocalSource::same_device(const std::string &a, const std::string &b) const

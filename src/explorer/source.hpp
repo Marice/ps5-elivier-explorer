@@ -31,6 +31,9 @@ struct Entry
     EntryKind kind = EntryKind::file;
     std::uint64_t size = 0; // 0 for directories
     std::int64_t modified_unix = 0;
+    // A symbolic link: kind and size are the target's (other when it cannot be read). It is never
+    // followed when deleting, and never copied.
+    bool is_link = false;
 };
 
 struct ListResult
@@ -89,6 +92,11 @@ class Source
     using ProgressFn = std::function<bool(std::uint64_t copied)>;
     virtual int copy_file(const std::string &from, const std::string &to, std::size_t chunk,
                           const ProgressFn &on_progress) = 0;
+
+    // True when no part of the path is a symbolic link; false when one is, or the path cannot be
+    // read. A path through a link can end anywhere, so a changing operation does not trust its
+    // name.
+    virtual bool is_plain_path(const std::string &path) const = 0;
 
     // Whether two paths are on the same device, so a rename between them moves instead of
     // copying. False when either cannot be told (a missing path, a source without devices).

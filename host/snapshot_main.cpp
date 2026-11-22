@@ -183,13 +183,12 @@ int main(int argc, char **argv)
         !load_font(renderer, assets + "/fonts/press-start-2p.huifont", &pixel, &fonts.pixel) ||
         !load_font(renderer, assets + "/fonts/patrick-hand.huifont", &hand, &fonts.hand))
         return 1;
-    // A pretend console for the Probe screen: internal storage, one USB drive, /user.
+    // A pretend console to browse: internal storage, one USB drive, /user.
     const std::string demo_root = std::string(argv[2]) + "/.explorer-root";
     hui::save::ensure_directory(argv[2]);
     hui::save::ensure_directory(demo_root);
     for (const char *folder : {"/data", "/data/homebrew", "/user", "/mnt", "/mnt/usb0", "/system"})
         hui::save::ensure_directory(demo_root + folder);
-    hui::concepts::set_probe_paths(demo_root, "");
     // Something to browse: folders, files of every kind, sizes and dates.
     const std::string browse = demo_root + "/data";
     for (const char *folder : {"homebrew", "Roms", "saves", "etaHEN", "backups"})

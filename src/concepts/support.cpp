@@ -107,7 +107,10 @@ class SupportScreen final : public app::Concept
             paint.body("The code could not be loaded; the link above leads to the same page.", x, y,
                        22.0f, paint.page_text_muted());
         }
-        draw_hints(frame.scene, context_.fonts, look, std::span<const ui::Hint>());
+        static constexpr ui::Hint kHints[] = {
+            {ui::Button::circle, "Close"},
+        };
+        draw_hints(frame.scene, context_.fonts, look, kHints);
         frame.scene.pop_opacity();
     }
 

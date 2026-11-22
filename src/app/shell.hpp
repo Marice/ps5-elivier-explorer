@@ -24,6 +24,7 @@ namespace hui::app
 //
 //   L1 / R1    previous / next design (cross-fade and slide)
 //   touchpad   info panel: what the design demonstrates and where its code is
+//   L3 / R3    the overlay design (Support), on top of the active one
 //
 // Everything else goes to the active design. The shell also keeps the
 // settings on disk and feeds the telemetry the designs may display.
@@ -83,6 +84,12 @@ class Shell
     // animate = false switches at once (and still restarts the entrance).
     void show(std::size_t index, bool animate);
     void set_info_open(bool open);
+    // The overlay design (L3 or R3): see overlay_concept().
+    void set_overlay_open(bool open);
+    bool overlay_open() const
+    {
+        return overlay_open_;
+    }
     // Drops the switcher banner at once (the tour keeps it out of pictures).
     void hide_banner()
     {
@@ -118,6 +125,10 @@ class Shell
     tween::Spring banner_show_;
     bool info_open_ = false;
     tween::Spring info_show_;
+    std::unique_ptr<Concept> overlay_;
+    Frame overlay_frame_;
+    bool overlay_open_ = false;
+    tween::Spring overlay_show_;
     bool settings_changed_ = true; // applied once at start-up
     float save_delay_ = 0.0f;      // > 0: a save is pending
     bool welcomed_ = false;

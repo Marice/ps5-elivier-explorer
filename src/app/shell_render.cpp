@@ -58,6 +58,17 @@ void Shell::compose(gfx::Renderer &renderer)
         renderer.backdrop(now.post);
     }
 
+    if (overlay_ && overlay_show_.value > 0.01f)
+    {
+        // The overlay design fades in over the active one, with its own backdrop.
+        record(overlay_frame_, *overlay_, overlay_show_.value, 0.0f, 1.0f);
+        renderer.backdrop(overlay_frame_.backdrop, overlay_show_.value);
+        renderer.draw(overlay_frame_.scene);
+        if (overlay_frame_.glass)
+            renderer.glass();
+        renderer.draw(overlay_frame_.overlay);
+    }
+
     chrome_.clear();
     draw_chrome();
     if (info_show_.value > 0.01f)

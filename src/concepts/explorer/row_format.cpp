@@ -80,6 +80,14 @@ std::string format_time(std::int64_t unix_seconds)
     return text;
 }
 
+int paged_focus(int focus, int rows, int page, int direction)
+{
+    if (rows <= 0)
+        return 0;
+    const int target = focus + direction * (page < 1 ? 1 : page);
+    return target < 0 ? 0 : (target > rows - 1 ? rows - 1 : target);
+}
+
 FileKind file_kind(const Entry &entry)
 {
     if (entry.kind == EntryKind::directory)

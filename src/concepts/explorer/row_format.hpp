@@ -31,6 +31,10 @@ std::vector<ui::TableRow> to_rows(const hui::explorer::PaneState &state);
 // time.
 std::string format_time(std::int64_t unix_seconds);
 
+// Where the focus lands when a page is turned: `direction` (-1 or 1) times `page` rows away, held
+// to the first and the last row. With no rows, 0.
+int paged_focus(int focus, int rows, int page, int direction);
+
 enum class FileKind : std::uint8_t
 {
     folder,

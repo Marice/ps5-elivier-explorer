@@ -1,4 +1,4 @@
-// EliVier Explorer - What freeing the app from its sandbox did, for the Probe screen.
+// EliVier Explorer - What freeing the app from its sandbox did, for the trace and the log.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "explorer/access_report.hpp"

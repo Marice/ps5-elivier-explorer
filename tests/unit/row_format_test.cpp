@@ -110,6 +110,18 @@ TEST(RowFormat, FormatsTimeInUtcWithoutALocalClock)
     EXPECT_EQ(format_time(-5), "-");
 }
 
+TEST(RowFormat, ATurnedPageMovesTheFocusAndStopsAtTheEnds)
+{
+    using hui::concepts::explorer::paged_focus;
+    EXPECT_EQ(paged_focus(0, 100, 9, 1), 9);
+    EXPECT_EQ(paged_focus(9, 100, 9, 1), 18);
+    EXPECT_EQ(paged_focus(18, 100, 9, -1), 9);
+    EXPECT_EQ(paged_focus(3, 100, 9, -1), 0);  // the first row, not before it
+    EXPECT_EQ(paged_focus(95, 100, 9, 1), 99); // the last row, not past it
+    EXPECT_EQ(paged_focus(0, 0, 9, 1), 0);     // nothing to focus
+    EXPECT_EQ(paged_focus(0, 5, 0, 1), 1);     // a page of nothing is still one row
+}
+
 TEST(RowFormat, KindsFollowTheExtensionAnyCase)
 {
     EXPECT_EQ(file_kind(folder("Anything.zip")), FileKind::folder);

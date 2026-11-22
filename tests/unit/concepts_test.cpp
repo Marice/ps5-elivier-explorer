@@ -33,7 +33,19 @@ TEST_F(EveryConcept, DescribesItself)
         EXPECT_GE(info.techniques.size(), 3u) << info.id;
         EXPECT_LT(info.sounds, hui::audio::SoundSet::count) << info.id;
     }
-    EXPECT_GE(ids.size(), 2u);
+    EXPECT_GE(ids.size(), 1u);
+}
+
+// Support is outside the switcher now (L3 or R3 opens it), so the loop above no longer meets it.
+TEST_F(EveryConcept, TheOverlayDesignDescribesItselfAndDraws)
+{
+    const hui::app::ConceptFactory factory = hui::app::overlay_concept();
+    ASSERT_NE(factory, nullptr);
+    const std::unique_ptr<Concept> design = factory(context_);
+    EXPECT_GT(std::string(design->info().name).size(), 2u);
+    design->enter();
+    send(*design, idle(), 1.5f);
+    expect_drawable(*design);
 }
 
 // The tour is what the snapshots and the console validation run: every design

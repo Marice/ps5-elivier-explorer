@@ -1,4 +1,4 @@
-// EliVier Explorer - What freeing the app from its sandbox did, for the Probe screen.
+// EliVier Explorer - What freeing the app from its sandbox did, for the trace and the log.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
@@ -33,7 +33,7 @@ struct AccessReport
     std::vector<std::string> steps; // what happened, in order
 };
 
-// Set once by the app at start; the Probe screen reads it.
+// Set once by the app at start; kept for the trace and the log.
 void set_access_report(AccessReport report);
 const AccessReport &access_report();
 

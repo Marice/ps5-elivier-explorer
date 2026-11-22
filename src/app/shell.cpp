@@ -22,8 +22,9 @@ using gfx::Color;
 
 constexpr float kTransitionSeconds = 0.5f;
 constexpr float kBannerSeconds = 3.2f;
-constexpr std::uint32_t kShellActions =
-    action_bit(Action::page_prev) | action_bit(Action::page_next) | action_bit(Action::touch);
+constexpr std::uint32_t kShellActions = action_bit(Action::page_prev) |
+                                        action_bit(Action::page_next) | action_bit(Action::touch) |
+                                        action_bit(Action::l3) | action_bit(Action::r3);
 
 std::string settings_path(const std::string &data_root)
 {
@@ -52,13 +53,16 @@ Shell::Shell(const ui::Fonts &fonts, const demo::Catalog &catalog, std::string d
 {
     for (ConceptFactory factory : concept_registry())
         concepts_.push_back(factory(context_));
+    if (const ConceptFactory overlay = overlay_concept())
+        overlay_ = overlay(context_);
     if (!concepts_.empty())
     {
         current_ = static_cast<std::size_t>(settings_.concept_index) % concepts_.size();
         previous_ = current_;
         concepts_[current_]->enter();
     }
-    banner_ = kBannerSeconds;
+    // The switcher banner says "L1 01 / 03 R1": nothing to say with one design.
+    banner_ = concepts_.size() > 1 ? kBannerSeconds : 0.0f;
 }
 
 audio::SoundSet Shell::sound_set() const
@@ -111,6 +115,18 @@ void Shell::set_info_open(bool open)
     info_open_ = open;
 }
 
+void Shell::set_overlay_open(bool open)
+{
+    if (!overlay_)
+        return;
+    if (open && !overlay_open_)
+    {
+        info_open_ = false;
+        overlay_->enter();
+    }
+    overlay_open_ = open;
+}
+
 void Shell::update(const InputFrame &input, float dt)
 {
     feedback_.clear();
@@ -123,14 +139,25 @@ void Shell::update(const InputFrame &input, float dt)
     }
 
     const int count = static_cast<int>(concepts_.size());
-    if (input.is_pressed(Action::page_next) || input.is_pressed(Action::page_prev))
+    if (count > 1 && !overlay_open_ &&
+        (input.is_pressed(Action::page_next) || input.is_pressed(Action::page_prev)))
     {
         direction_ = input.is_pressed(Action::page_next) ? 1 : -1;
         show(static_cast<std::size_t>((static_cast<int>(current_) + direction_ + count) % count),
              true);
         feedback_.play(audio::Cue::tab, 1.0f, direction_ > 0 ? 0.3f : -0.3f);
     }
-    if (input.is_pressed(Action::touch))
+    if (overlay_ && !info_open_ && (input.is_pressed(Action::l3) || input.is_pressed(Action::r3)))
+    {
+        set_overlay_open(!overlay_open_);
+        feedback_.play(overlay_open_ ? audio::Cue::modal_open : audio::Cue::modal_close);
+    }
+    else if (overlay_open_ && input.is_pressed(Action::back))
+    {
+        set_overlay_open(false);
+        feedback_.play(audio::Cue::modal_close);
+    }
+    else if (input.is_pressed(Action::touch) && !overlay_open_)
     {
         info_open_ = !info_open_;
         feedback_.play(info_open_ ? audio::Cue::modal_open : audio::Cue::modal_close);
@@ -143,16 +170,22 @@ void Shell::update(const InputFrame &input, float dt)
 
     // The active design sees everything the shell does not use; nothing at
     // all while the info panel covers it.
+    // L1 and R1 belong to the design when there is nothing to switch to.
+    const std::uint32_t used =
+        count > 1
+            ? kShellActions
+            : kShellActions & ~(action_bit(Action::page_prev) | action_bit(Action::page_next));
     InputFrame forwarded = input;
-    forwarded.pressed &= ~kShellActions;
-    forwarded.released &= ~kShellActions;
-    forwarded.held &= ~kShellActions;
-    if (info_open_)
-    {
-        forwarded = InputFrame{};
-        forwarded.connected = input.connected;
-    }
+    forwarded.pressed &= ~used;
+    forwarded.released &= ~used;
+    forwarded.held &= ~used;
+    InputFrame blank;
+    blank.connected = input.connected;
+    if (info_open_ || overlay_open_)
+        forwarded = blank;
     concepts_[current_]->update(forwarded, dt, feedback_);
+    if (overlay_ && (overlay_open_ || overlay_show_.value > 0.01f))
+        overlay_->update(blank, dt, feedback_); // it takes no input: it only moves
 
     if (context_.settings_changed)
     {
@@ -173,6 +206,8 @@ void Shell::update(const InputFrame &input, float dt)
     banner_show_.update(dt, 10.0f);
     info_show_.target = info_open_ ? 1.0f : 0.0f;
     info_show_.update(dt, settings_.reduced_motion ? 40.0f : 14.0f);
+    overlay_show_.target = overlay_open_ ? 1.0f : 0.0f;
+    overlay_show_.update(dt, settings_.reduced_motion ? 40.0f : 14.0f);
     telemetry_.uptime += static_cast<double>(dt);
 }
 
@@ -279,14 +314,17 @@ void Shell::draw_chrome()
             }
         }
 
+        // L1 / R1 only does something with more than one design.
         const ui::Hint hints[] = {
             {ui::Button::l1, "Switch screen", ui::Button::r1},
             {ui::Button::touchpad, "Close"},
         };
+        const bool switcher = concepts_.size() > 1;
         ui::HintLayout layout;
         layout.size = 34;
         layout.text_size = 22;
-        ui::draw_hints(chrome_, fonts_, glyphs, hints, 2, left, false, layout);
+        ui::draw_hints(chrome_, fonts_, glyphs, switcher ? hints : hints + 1, switcher ? 2 : 1,
+                       left, false, layout);
         if (!version_.empty())
         {
             std::snprintf(text, sizeof(text), "EliVier Explorer %s, built on ps5-homebrew-ui",

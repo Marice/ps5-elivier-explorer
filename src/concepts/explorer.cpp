@@ -11,6 +11,7 @@
 
 #include "concepts/explorer/look.hpp"
 #include "concepts/explorer/row_format.hpp"
+#include "core/held_step.hpp"
 #include "core/tween.hpp"
 #include "explorer/copy_job.hpp"
 #include "explorer/guard.hpp"
@@ -83,6 +84,12 @@ constexpr app::TourStep kTour[] = {
     {0.12f, 0, Direction::down, nullptr},
     {0.2f, action_bit(Action::confirm), Direction::none, nullptr},
     {0.8f, 0, Direction::none, "files-delete"},
+    {0.2f, action_bit(Action::back), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, nullptr},
+    // R3 opens Support on top (the shell does that; a test that drives only this design ignores
+    // it).
+    {0.3f, action_bit(Action::r3), Direction::none, nullptr},
+    {0.9f, 0, Direction::none, "files-support"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
 };
@@ -256,8 +263,11 @@ class PaneView
     }
 
     // The pad, for the pane that has the focus. Cross is not passed on to the table.
-    void handle(const InputFrame &input, app::Feedback &feedback)
+    void handle(const InputFrame &input, float dt, app::Feedback &feedback)
     {
+        // L1 / R1: a page at a time, and faster the longer they are held.
+        if (const int step = pager_.step(input, dt))
+            turn_page(step, feedback);
         const int row = table.focus();
         const Entry *focused = entry_of_row(row);
         const PaneState &state = model.state();
@@ -361,6 +371,27 @@ class PaneView
     ui::Table table;
 
   private:
+    // Rows that fit in the table below its header, less one so the row that was last stays in view.
+    int page_rows() const
+    {
+        const float rows = (table.bounds().h - table.style.header_height) / table.style.row_height;
+        return rows > 2.0f ? static_cast<int>(rows) - 1 : 1;
+    }
+
+    void turn_page(int direction, app::Feedback &feedback)
+    {
+        const int rows = static_cast<int>(table.rows().size());
+        const int from = table.focus() < 0 ? 0 : table.focus();
+        const int to = paged_focus(from, rows, page_rows(), direction);
+        if (to == from)
+            return;
+        table.set_focus(to, false);
+        model.set_focus(to);
+        if (!pager_.repeating())
+            feedback.play(audio::Cue::focus); // a held pager is quiet: the glide is enough
+    }
+
+    HeldStep pager_{Action::page_prev, Action::page_next};
     Rect area_{};
 };
 
@@ -495,7 +526,7 @@ class ExplorerScreen final : public app::Concept
             else if (input.is_pressed(Action::west))
                 start_transfer(JobKind::copy, active, feedback);
             else
-                pane.handle(input, feedback);
+                pane.handle(input, dt, feedback);
             const ui::Event event = pane.move(input, feedback);
             // Past a table's edge: the focus crosses the split (or is refused where there is no
             // pane).
@@ -544,9 +575,14 @@ class ExplorerScreen final : public app::Concept
         conflict_.draw(top);
         toasts_.draw(top);
         static constexpr ui::Hint kHints[] = {
-            {ui::Button::cross, "Open"},    {ui::Button::circle, "Up"},
-            {ui::Button::triangle, "Mark"}, {ui::Button::square, "Copy"},
-            {ui::Button::options, "Menu"},  {ui::Button::l2, "Sort", ui::Button::r2},
+            {ui::Button::cross, "Open"},
+            {ui::Button::circle, "Up"},
+            {ui::Button::triangle, "Mark"},
+            {ui::Button::square, "Copy"},
+            {ui::Button::options, "Menu"},
+            {ui::Button::l2, "Sort", ui::Button::r2},
+            {ui::Button::l1, "Page", ui::Button::r1},
+            {ui::Button::right_stick, "Support"},
         };
         static constexpr ui::Hint kBusy[] = {
             {ui::Button::circle, "Hold to cancel"},

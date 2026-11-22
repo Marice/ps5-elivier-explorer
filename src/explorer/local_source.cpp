@@ -1,7 +1,7 @@
 // EliVier Explorer - The console's own drives (and the PC's, in tests): plain POSIX.
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// What the console taught (see probe.cpp): statvfs(path) kills a title, so free space is
+// What the console taught: statvfs(path) kills a title (a page fault, in the app), so free space is
 // fstatvfs on a folder opened for it; dirfd() is declared but not linked, so that is a second
 // open and not the listing's own; readdir's d_type is not relied on, every entry is stat'ed.
 

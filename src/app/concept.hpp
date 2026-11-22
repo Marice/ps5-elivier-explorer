@@ -142,4 +142,8 @@ using ConceptFactory = std::unique_ptr<Concept> (*)(Context &context);
 // Every design, in switcher order (src/concepts/registry.cpp).
 std::span<const ConceptFactory> concept_registry();
 
+// The one design outside the switcher: it opens on top of the active one with L3 or R3 and closes
+// with Circle, L3 or R3 (the Support screen). Null for none.
+ConceptFactory overlay_concept();
+
 } // namespace hui::app

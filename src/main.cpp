@@ -248,10 +248,6 @@ int main()
 
     hui::concepts::set_support_qr(hui::gfx::load_png_texture, assets + "/support/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
-    // probe.txt goes where a PC can read it over FTP: /data when the app sees it.
-    hui::concepts::set_probe_paths("", save::ensure_directory("/data/elivier-explorer")
-                                           ? "/data/elivier-explorer"
-                                           : std::string(kDataRoot) + "/probe");
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");

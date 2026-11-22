@@ -58,7 +58,6 @@ void draw_hints(gfx::DrawList &list, const ui::Fonts &fonts, const ui::Theme &lo
         if (count < 9)
             row[count++] = hint;
     }
-    row[count++] = {ui::Button::l1, "Screen", ui::Button::r1};
     ui::GlyphStyle glyphs = look.dark ? ui::GlyphStyle::dark() : ui::GlyphStyle::light();
     glyphs.label = look.page_text.a > 0.0f ? look.page_text : look.text;
     ui::draw_hints(list, fonts, glyphs, row, count, kRight, true);

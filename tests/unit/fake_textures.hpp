@@ -29,7 +29,19 @@ class FakeTextures final : public hui::viewer::TextureHost
         live.erase(texture);
     }
 
+    bool update(std::uint32_t texture, int width, int height, const std::uint8_t *rgba) override
+    {
+        if (live.count(texture) == 0 || width != last_width || height != last_height ||
+            rgba == nullptr)
+            return false;
+        ++updated;
+        last_pixel0 = rgba[0];
+        return true;
+    }
+
     int created = 0;
+    int updated = 0;
+    int last_pixel0 = -1;
     int destroyed = 0;
     int last_width = 0;
     int last_height = 0;

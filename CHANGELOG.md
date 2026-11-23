@@ -13,6 +13,10 @@ All notable changes to EliVier Explorer are recorded here. The format follows
   and changes the volume, L1 and R1 choose the sound track, Square the subtitles, Triangle switches to full
   screen and back. On one console, two 1080p HEVC films (8-bit and 10-bit, 5.1 sound) played at 24 pictures a
   second with none late, and a 4K HEVC 10-bit film at 60 fps showed 60 pictures a second in most seconds; surround is mixed down at the usual weights with a soft limit on peaks.
+- Hardware video decoding: H.264 up to 1920 x 1088 and H.265 Main and Main 10 up to 3840 x 2176 go to the
+  console's decoder (`libSceVideodec2`), brought up at start-up and kept for the run; other codecs, and a second
+  film at the same time, decode in software. On one console a 4K60 HEVC 10-bit film showed 60 pictures a second in
+  most seconds. `make HW_DECODE=0` builds without it, for a firmware that refuses the library.
 - Films and songs opened in a viewer play at their own volume (D-pad up and down) and no longer also follow the
   background music volume, which made them about 16 dB quieter at its default.
 - The app heap is 1 GiB of direct memory when the console gives it, and 128 MiB of flexible memory as before

@@ -29,9 +29,10 @@ override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(
 override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 	$(OPENGL_SDK)/lib/libSceAgcDriver.so $(APP_IMPORT_STUBS))
 # HW_DECODE=1 links an import stub of libSceVideodec2, so that the loader loads the system
-# library when the app starts (the only way a fake-signed module gets it; D47). Off by default:
-# if the firmware does not export a name of the stub, the whole app is refused at start.
-HW_DECODE ?= 0
+# library when the app starts (the only way a fake-signed module gets it; D47), and the app
+# decodes H.264 and HEVC in hardware (D60 to D62). On by default (D63). If a firmware does not
+# export a name of the stub, the whole app is refused at start: build with HW_DECODE=0 then.
+HW_DECODE ?= 1
 ifeq ($(HW_DECODE),1)
 VIDEODEC2_STUB := .deps/video/stubs/libSceVideodec2.so
 override APP_DEFINITIONS := $(strip $(APP_DEFINITIONS) HUI_VIDEODEC2=1)

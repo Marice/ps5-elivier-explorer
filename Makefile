@@ -17,9 +17,15 @@ PS5_OPENGL_PREFIX ?=
 
 # The app always builds against ps5-opengl; user APP_* values append.
 OPENGL_SDK := .deps/ps5-opengl/current
+# FFmpeg, dav1d and zlib for the PS5, built by tools/setup-video-dependencies.sh (make video).
+VIDEO_PREFIX := .deps/video/root/usr
+VIDEO_ARCHIVES := $(addprefix $(VIDEO_PREFIX)/lib/,libavformat.a libavcodec.a libswresample.a \
+	libavutil.a libdav1d.a libz.a)
 override APP_DEFINITIONS := $(strip GL_GLEXT_PROTOTYPES=1 $(APP_DEFINITIONS))
-override APP_INCLUDE_PATHS := $(strip src $(OPENGL_SDK)/include $(APP_INCLUDE_PATHS))
-override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(APP_STATIC_ARCHIVES))
+override APP_INCLUDE_PATHS := $(strip src $(OPENGL_SDK)/include $(VIDEO_PREFIX)/include \
+	$(APP_INCLUDE_PATHS))
+override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(VIDEO_ARCHIVES) \
+	$(APP_STATIC_ARCHIVES))
 override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 	$(OPENGL_SDK)/lib/libSceAgcDriver.so $(APP_IMPORT_STUBS))
 PACBREW_PACKAGES ?=
@@ -55,7 +61,7 @@ RUNTIME_INPUTS := tools/rebuild-libc.sh tools/build-host-tools.sh tools/ninja-bu
 	$(wildcard tooling/native/runtime/*.txt)
 HOST_UNIT_TEST := build/tests/unit_tests
 
-.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
+.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl video host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
 
 all: app
 build: app
@@ -95,6 +101,10 @@ opengl:
 	@printf '%s\n' '==> [opengl] Preparing the ps5-opengl SDK link group'
 	@bash tools/prepare-opengl.sh
 
+video:
+	@printf '%s\n' '==> [video] Building FFmpeg, dav1d and zlib for the PS5 (once, about ten minutes)'
+	@bash tools/setup-video-dependencies.sh >/dev/null
+
 pacbrew:
 	@printf '%s\n' '==> [pacbrew] Fetching the pinned prebuilt ports sysroot'
 	@bash tools/setup-pacbrew-dependencies.sh --all
@@ -119,7 +129,7 @@ $(RUNTIME): $(RUNTIME_INPUTS)
 	@printf '%s\n' '==> [libc] Generating the missing or outdated runtime'
 	@bash tools/rebuild-libc.sh
 
-app: $(RUNTIME) opengl
+app: $(RUNTIME) opengl video
 	@printf '%s\n' '==> [app] Compiling, linking, signing, and assembling the app folder'
 	@bash tools/build.sh Folder
 

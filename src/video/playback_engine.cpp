@@ -569,6 +569,11 @@ class EngineAudioSource final : public audio::Decoder
         }
         if (impl_.sound_seconds < 0.0)
             impl_.sound_seconds = 0.0;
+        if (written > 0 && !first_read_traced_)
+        {
+            hui::explorer::trace("film: first sound read by the player (%d frames)", written);
+            first_read_traced_ = true;
+        }
         if (written < frames)
         {
             // Nothing (more) queued. At the end that is the end. Otherwise the decoder is behind
@@ -607,6 +612,7 @@ class EngineAudioSource final : public audio::Decoder
     }
 
   private:
+    bool first_read_traced_ = false;
     PlaybackEngine::Impl &impl_;
     PlaybackEngine &engine_;
     std::string empty_;

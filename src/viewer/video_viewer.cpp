@@ -334,6 +334,10 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
     }
     if (!engine_)
         return;
+    // The first frames after the first picture: shows whether one was drawn and the sound pumped.
+    if (pictures_shown_ > 0 && traced_updates_ < 3)
+        hui::explorer::trace("film: update %d after the first picture, shown %d", ++traced_updates_,
+                             pictures_shown_);
     if (player_)
         player_->pump(dt);
     else if (!paused_ && !ended_)

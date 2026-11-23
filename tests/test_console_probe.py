@@ -50,6 +50,37 @@ class ConsoleProbeTests(unittest.TestCase):
         made = [path for verb, path in console.ftp.calls if verb == "MKD"]
         self.assertEqual(made, ["/data/homebrew/TITLE", "/data/homebrew/TITLE/assets"])
 
+    def test_what_has_to_be_sent_is_judged_by_size(self):
+        big = 5 * 1024 * 1024
+        self.assertTrue(probe.needs_upload(None, big))            # not on the console
+        self.assertTrue(probe.needs_upload(big - 1, big))         # another size
+        self.assertFalse(probe.needs_upload(big, big))            # a large file that matches
+        self.assertTrue(probe.needs_upload(100, 100))             # small files are always sent
+
+    def test_an_upload_whose_size_does_not_arrive_stops_the_run(self):
+        class FakeFtp:
+            def __init__(self, stored_size):
+                self.stored_size = stored_size
+
+            def cwd(self, path):
+                pass
+
+            def mkd(self, path):
+                pass
+
+            def storbinary(self, command, stream, blocksize=0):
+                stream.read()
+
+            def mlsd(self, facts=None):
+                return iter([("file.bin", {"size": str(self.stored_size)})])
+
+        console = probe.ProbeConsole.__new__(probe.ProbeConsole)
+        console.ftp = FakeFtp(10)
+        console.upload("/data/homebrew/T/file.bin", b"x" * 10)  # arrives whole: no error
+        console.ftp = FakeFtp(4)
+        with self.assertRaises(SystemExit):
+            console.upload("/data/homebrew/T/file.bin", b"x" * 10)
+
     def test_a_manual_launch_is_only_asked_for_with_the_switch_on(self):
         self.assertTrue(probe.wants_manual_launch({"PS5_MANUAL_LAUNCH": "1"}))
         self.assertFalse(probe.wants_manual_launch({}))

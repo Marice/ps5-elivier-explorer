@@ -27,8 +27,8 @@ but the title itself runs on the console. Use it for a title whose ID is not PPS
 which the helper refuses.
 """
 
-import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -60,6 +60,40 @@ class ProbeConsole(tour.Console):
     servers for the console do not answer MKD for a folder that exists, and the upload hangs.
     """
 
+    def __init__(self, host, port):
+        super().__init__(host, port)
+        if os.environ.get("FTP_DEBUG") == "1":
+            self.ftp.set_debuglevel(1)  # every command and reply, to find where a server stalls
+
+    def sizes(self, directory):
+        """{name: size} of a folder from one listing, or None when it cannot be listed."""
+        try:
+            self.ftp.cwd(directory)
+            return {name: int(facts.get("size", -1))
+                    for name, facts in self.ftp.mlsd(facts=["size"]) if name not in (".", "..")}
+        except tour.all_errors:
+            return None
+        finally:
+            try:
+                self.ftp.cwd("/")
+            except tour.all_errors:
+                pass
+
+    def upload(self, path, data):
+        """A plain STOR to the final name, then a check of the size that arrived.
+
+        The tour reads every file back to compare hashes, and on the console's FTP server of
+        this machine a read of a signed file (sce_module/libc.prx) never gets an answer, which
+        stalls the server for the next command too. A listing gives sizes without reading.
+        """
+        directory, name = path.rsplit("/", 1)
+        self.make_dirs(directory)
+        self.ftp.storbinary(f"STOR {path}", io.BytesIO(data), blocksize=256 * 1024)
+        arrived = (self.sizes(directory) or {}).get(name)
+        if arrived != len(data):
+            tour.stop(f"{path}: {arrived} bytes arrived and {len(data)} were sent; "
+                      "look at the console before running again")
+
     def make_dirs(self, path):
         current = ""
         for part in path.strip("/").split("/"):
@@ -77,6 +111,18 @@ class ProbeConsole(tour.Console):
             self.ftp.cwd("/")
         except tour.all_errors:
             pass
+
+
+# Files below this size are always sent: a changed file of the same length (a setting in a
+# small text file) would otherwise be taken for the old one, and sending them costs nothing.
+ALWAYS_SEND_BELOW = 1024 * 1024
+
+
+def needs_upload(remote_size, local_size):
+    """Whether a file has to be sent, judged by its size alone (see ProbeConsole.upload)."""
+    if remote_size is None or local_size < ALWAYS_SEND_BELOW:
+        return True
+    return remote_size != local_size
 
 
 def wants_manual_launch(environ):
@@ -142,20 +188,22 @@ def main():
     # The executable and the metadata go last: the title is complete when they land.
     files.sort(key=lambda p: (p.name in ("eboot.bin", "param.json"), str(p)))
     uploaded = 0
+    listings = {}
     for path in files:
         relative = path.relative_to(package).as_posix()
         data = path.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        installed = console.read(f"{remote}/{relative}")
-        if installed is not None and hashlib.sha256(installed).hexdigest() == digest:
+        directory, name = f"{remote}/{relative}".rsplit("/", 1)
+        if directory not in listings:
+            listings[directory] = console.sizes(directory) or {}
+        if not needs_upload(listings[directory].get(name), len(data)):
             continue
-        console.write(f"{remote}/{relative}", data)
+        console.upload(f"{remote}/{relative}", data)
         uploaded += 1
-    tour.say(f"Installed {title}: {len(files)} files verified, {uploaded} uploaded")
+    tour.say(f"Installed {title}: {len(files)} files checked by size, {uploaded} uploaded")
 
     # The request goes into the install folder (the app reads it as /app0/dev/request.txt).
     token = str(int(time.time()))
-    console.write(f"{remote}/dev/request.txt", request_line(name, token).encode())
+    console.upload(f"{remote}/dev/request.txt", request_line(name, token).encode())
     uploaded += 1
     console.close()
 

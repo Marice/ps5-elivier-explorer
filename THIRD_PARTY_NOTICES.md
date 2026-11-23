@@ -80,9 +80,14 @@ encoders, no network, no filters; the list of decoders, demuxers, parsers and bi
 the sources named, with their hashes, in that script, into `.deps/video/` (not vendored in this repository) and
 linked statically into the PS5 application. FFmpeg is linked as a library; its licence text is available from
 https://ffmpeg.org/legal.html and with its sources. The decoder interface and the playback engine in `src/video/`
-are this project's own; the design of the hardware decoder path was informed by reading the public sources of
-[EVO Player](https://github.com/sainsaji/EVO-PLAYER-PS5) (GPL-3.0-or-later) and its documentation, and nothing
-was copied from them. The test clips in `tests/fixtures/video` and the demo film in `host/demo` are generated
+are this project's own. The console's hardware decoder (`libSceVideodec2`) has no public documentation: the
+structure layouts, constants and call order in `src/platform/ps5/videodec2.hpp` follow what two homebrew players
+describe and use, [EVO Player](https://github.com/sainsaji/EVO-PLAYER-PS5) (GPL-3.0-or-later; its ABI notes credit
+ProsperoLight) and [VLC for PS5](https://github.com/ZiZc3/VLC) (GPL-3.0; its decoder module is also used by
+[MediaPlayerClassicPS5](https://github.com/MisterTemaki/MediaPlayerClassicPS5)), together with the
+[hardware decoding research](https://github.com/manoma080/ps5-hardware-video-decoding-research) notes
+(GPL-3.0-or-later). The code was written for this project from those descriptions; the layouts themselves are
+interface facts, checked on a console (docs/decision-log.md, D60). The test clips in `tests/fixtures/video` and the demo film in `host/demo` are generated
 from FFmpeg's own test sources and invented text.
 
 ## Image decoding

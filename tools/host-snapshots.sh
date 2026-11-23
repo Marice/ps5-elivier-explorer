@@ -17,12 +17,27 @@ cc=$(command -v "${HOST_CC:-clang}")
 build="$root/build/host-snapshots"
 ninja_begin "$build/build.ninja"
 
+# The video viewer reads files through FFmpeg: the host copy of the pinned libraries (built once).
+video_include=""
+video_archives=()
+while IFS='=' read -r key value; do
+    case $key in
+        VIDEO_INCLUDE) video_include=$value ;;
+        VIDEO_ARCHIVES) read -r -a video_archives <<< "$value" ;;
+    esac
+done < <(bash "$root/tools/setup-video-dependencies.sh" --host)
+[[ -n $video_include && ${#video_archives[@]} -gt 0 ]] || {
+    echo "the host video libraries are missing" >&2
+    exit 2
+}
+
 # Everything under src/ except the console platform layer and entry point.
 sources=("$root/host/snapshot_main.cpp" "$root/host/manifest.cpp" "$root/host/platform_host.cpp")
 while IFS= read -r -d '' source; do
     sources+=("$source")
 done < <(find "$root/src" -type f \( -name '*.cpp' -o -name '*.c' \) \
-    ! -path "$root/src/platform/*" ! -path "$root/src/runtime/*" ! -name main.cpp -print0 | sort -z)
+    ! -path "$root/src/platform/*" ! -path "$root/src/runtime/*" ! -name main.cpp \
+    ! -name libc_shims.cpp -print0 | sort -z)
 
 objects=()
 for source in "${sources[@]}"; do
@@ -35,12 +50,14 @@ for source in "${sources[@]}"; do
     else
         ninja_inputs=("$source" "$cxx")
         ninja_edge CXX "$object" "${compiler_cache[@]}" "$cxx" -std=c++20 -O2 -Wall -Wextra \
-            -DGL_GLEXT_PROTOTYPES=1 -I"$root/src" -I"$root/host" -MD -MF "$object.d" -c "$source" -o "$object"
+            -DGL_GLEXT_PROTOTYPES=1 -I"$root/src" -I"$root/host" -isystem "$video_include" \
+            -MD -MF "$object.d" -c "$source" -o "$object"
     fi
     objects+=("$object")
 done
-ninja_inputs=("${objects[@]}")
-ninja_edge LINK "$build/hui_snapshots" "$cxx" "${objects[@]}" -lEGL -lGL -lm -o "$build/hui_snapshots"
+ninja_inputs=("${objects[@]}" "${video_archives[@]}")
+ninja_edge LINK "$build/hui_snapshots" "$cxx" "${objects[@]}" "${video_archives[@]}" -lEGL -lGL -lm \
+    -pthread -ldl -o "$build/hui_snapshots"
 if ! ninja_run >"$build/build.log" 2>&1; then
     grep -E 'error|FAILED|warning' -A6 "$build/build.log" | head -80 >&2
     exit 1

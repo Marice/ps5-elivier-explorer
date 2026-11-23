@@ -521,8 +521,8 @@ TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)
     FakeTextures textures;
     const auto plain = open(kDir + "/h264-aac.mp4", &textures);
     const auto rich = open(kDir + "/multi-track.mkv", &textures);
-    EXPECT_EQ(plain->hints().size(), 4u);
-    EXPECT_EQ(rich->hints().size(), 6u); // sound and subtitles can be chosen
+    EXPECT_EQ(plain->hints().size(), 6u);
+    EXPECT_EQ(rich->hints().size(), 7u); // sound and subtitles can be chosen
 }
 
 TEST(VideoHandler, ClaimsVideoByExtensionAndByContent)

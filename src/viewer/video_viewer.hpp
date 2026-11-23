@@ -18,6 +18,8 @@
 #pragma once
 
 #include "audio/player.hpp"
+#include "core/held_step.hpp"
+#include "ui/components/menu.hpp"
 #include "video/playback_engine.hpp"
 #include "viewer/handler.hpp"
 #include "viewer/viewer.hpp"
@@ -50,6 +52,22 @@ class VideoViewer final : public Viewer
     bool fullscreen() const override
     {
         return fullscreen_;
+    }
+    bool menu_open() const
+    {
+        return menu_.is_open();
+    }
+    double subtitle_delay() const
+    {
+        return subtitle_delay_;
+    }
+    double sound_delay() const
+    {
+        return sound_delay_;
+    }
+    bool fill() const
+    {
+        return fill_;
     }
     bool hdr_output() const
     {
@@ -108,6 +126,9 @@ class VideoViewer final : public Viewer
     std::vector<hui::video::SubtitleLine> subtitle_lines(double at) const;
     gfx::Color ink(gfx::Color colour) const; // a colour drawn over the film, as the display reads it
     void sync_hdr();
+    void open_menu(ui::Feedback &feedback);
+    void menu_chosen(int tag);
+    bool handle_adjust(const InputFrame &input);
     void remember_position();
     void show_note(std::string text);
 
@@ -138,6 +159,21 @@ class VideoViewer final : public Viewer
     bool ended_ = false;
     bool closing_ = false;
     bool fullscreen_ = false;
+    // The Options menu (D73) and what it sets.
+    ui::Menu menu_;
+    gfx::Rect window_area_{};
+    enum class Adjust
+    {
+        none,
+        subtitles,
+        sound,
+    };
+    Adjust adjust_ = Adjust::none; // left/right change a delay while set
+    double subtitle_delay_ = 0.0;  // seconds the subtitles come later (negative: earlier)
+    double sound_delay_ = 0.0;     // seconds the sound comes later than the picture
+    bool fill_ = false;            // full screen covered, the picture cropped
+    HeldStep jump_;                // L2/R2: a minute back or forward, faster while held
+    int jump_repeats_ = 0;
     HdrOutput *hdr_ = nullptr; // the display's HDR10 mode, when there is one
     MediaMemory *memory_ = nullptr; // resume positions and languages, when there is one
     std::string path_;

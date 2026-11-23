@@ -31,6 +31,20 @@ constexpr float kSeekInterval = 0.12f; // seconds between seeks while the D-pad 
 constexpr float kOverlaySeconds = 4.0f;
 constexpr float kBarHeight = 150.0f;
 constexpr float kHintBand = 90.0f; // the hint row the bar carries in full screen
+// The Options menu's items (D73).
+constexpr int kTagRestart = 1;
+constexpr int kTagSubtitleDelay = 2;
+constexpr int kTagSoundDelay = 3;
+constexpr int kTagFill = 4;
+constexpr double kDelayStep = 0.1;
+constexpr double kMaxDelay = 10.0;
+
+std::string signed_seconds(double seconds)
+{
+    char text[32];
+    std::snprintf(text, sizeof(text), "%+.1f s", seconds);
+    return text;
+}
 constexpr std::size_t kMaxExternalSubtitles = 8;
 constexpr float kSubtitleSize = 38.0f;
 
@@ -110,6 +124,7 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
                          const hui::explorer::Entry &entry, const ViewerContext &context)
     : name_(std::move(name)), textures_(context.textures), memory_(context.memory), path_(path)
 {
+    window_area_ = context.area;
     if (source == nullptr)
     {
         error_ = "There is nothing to play";
@@ -374,6 +389,7 @@ std::vector<std::string> VideoViewer::subtitle_choices() const
 
 std::vector<hui::video::SubtitleLine> VideoViewer::subtitle_lines(double at) const
 {
+    at -= subtitle_delay_; // later subtitles show the cue of that much earlier
     if (!engine_ || subtitle_choice_ <= 0 ||
         subtitle_choice_ >= static_cast<int>(subtitle_sources_.size()))
         return {};
@@ -440,7 +456,8 @@ void VideoViewer::show_picture()
 {
     // Pictures are taken even with nowhere to show them: the engine's queue must keep moving, or
     // it stops reading and the sound (the clock) starves.
-    if (!engine_->take_picture(position(), picture_) || textures_ == nullptr)
+    // A sound delay shows the picture that belongs that much later than what is heard.
+    if (!engine_->take_picture(position() + sound_delay_, picture_) || textures_ == nullptr)
         return;
     if (texture_ != 0 && (picture_.width != texture_width_ || picture_.height != texture_height_))
     {
@@ -472,8 +489,108 @@ void VideoViewer::show_picture()
     ++pictures_shown_;
 }
 
-void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*feedback*/)
+void VideoViewer::open_menu(ui::Feedback &feedback)
 {
+    std::vector<ui::MenuItem> items;
+    const auto item = [](std::string label, int tag, bool disabled = false) {
+        ui::MenuItem made;
+        made.label = std::move(label);
+        made.tag = tag;
+        made.disabled = disabled;
+        return made;
+    };
+    items.push_back(item("Start from the beginning", kTagRestart));
+    ui::MenuItem subtitles = item("Subtitle delay", kTagSubtitleDelay, subtitle_choice_ == 0);
+    subtitles.shortcut = signed_seconds(subtitle_delay_);
+    items.push_back(subtitles);
+    ui::MenuItem sound = item("Sound delay", kTagSoundDelay, !player_);
+    sound.shortcut = signed_seconds(sound_delay_);
+    items.push_back(sound);
+    ui::MenuItem fill = item("Fill the screen", kTagFill, !fullscreen_);
+    fill.checkable = true;
+    fill.checked = fill_;
+    items.push_back(fill);
+    menu_.style.theme = ui::default_theme();
+    const gfx::Rect area =
+        fullscreen_ ? gfx::Rect{0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight} : window_area_;
+    menu_.set_bounds(area);
+    menu_.set_items(std::move(items));
+    // Above the bottom right corner, where the bar's state text is.
+    menu_.open({area.x + area.w - 140.0f, area.y + area.h - kBarHeight, 1.0f, 1.0f}, feedback);
+}
+
+void VideoViewer::menu_chosen(int tag)
+{
+    switch (tag)
+    {
+    case kTagRestart:
+        menu_.dismiss();
+        if (memory_ != nullptr)
+            memory_->forget(path_);
+        if (ended_ || paused_)
+        {
+            paused_ = false;
+            if (player_)
+                player_->set_paused(false);
+        }
+        restart_at(0.0);
+        break;
+    case kTagSubtitleDelay:
+        menu_.dismiss();
+        adjust_ = Adjust::subtitles;
+        break;
+    case kTagSoundDelay:
+        menu_.dismiss();
+        adjust_ = Adjust::sound;
+        break;
+    case kTagFill:
+        fill_ = !fill_;
+        break;
+    default:
+        break;
+    }
+}
+
+// Left and right change the delay being set; Cross or Circle leave. False once it is left.
+bool VideoViewer::handle_adjust(const InputFrame &input)
+{
+    if (input.is_pressed(Action::confirm) || input.is_pressed(Action::back) ||
+        input.is_pressed(Action::menu))
+        return false;
+    double &delay = adjust_ == Adjust::subtitles ? subtitle_delay_ : sound_delay_;
+    if (input.nav == Direction::left)
+        delay = std::max(-kMaxDelay, delay - kDelayStep);
+    else if (input.nav == Direction::right)
+        delay = std::min(kMaxDelay, delay + kDelayStep);
+    delay = std::round(delay * 10.0) / 10.0; // no drift from adding tenths
+    return true;
+}
+
+void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedback)
+{
+    menu_.update(dt);
+    // The menu has the pad while it is open; Circle closes it, not the film.
+    if (menu_.is_open() && engine_)
+    {
+        if (menu_.handle(input, feedback) == ui::Event::activated)
+            menu_chosen(menu_.items()[static_cast<std::size_t>(menu_.focus())].tag);
+        if (player_)
+            player_->pump(dt);
+        sync_hdr();
+        show_picture();
+        return;
+    }
+    if (adjust_ != Adjust::none && engine_)
+    {
+        overlay_ = kOverlaySeconds;
+        if (!handle_adjust(input))
+            adjust_ = Adjust::none;
+        if (player_)
+            player_->pump(dt);
+        sync_hdr();
+        show_picture();
+        return;
+    }
     if (input.is_pressed(Action::back))
     {
         closing_ = true;
@@ -554,6 +671,21 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
         touched = true; // the bar comes up, so the new hints are seen
         fullscreen_ = !fullscreen_;
     }
+    if (input.is_pressed(Action::menu))
+    {
+        touched = true;
+        open_menu(feedback);
+    }
+    // L2/R2: a minute at a time; held, two and then five minutes a step.
+    if (const int jump = jump_.step(input, dt); jump != 0)
+    {
+        jump_repeats_ = input.is_pressed(Action::jump_prev) || input.is_pressed(Action::jump_next)
+                            ? 0
+                            : jump_repeats_ + 1;
+        const float size = jump_repeats_ < 4 ? 60.0f : jump_repeats_ < 10 ? 120.0f : 300.0f;
+        pending_seek_ += static_cast<float>(jump) * size;
+        touched = true;
+    }
     switch (input.nav)
     {
     case Direction::left:
@@ -581,7 +713,7 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
     if (pending_seek_ != 0.0f && seek_cooldown_ <= 0.0f)
     {
         const double length = engine_->duration();
-        double target = now + static_cast<double>(pending_seek_);
+        double target = std::max(0.0, now + static_cast<double>(pending_seek_));
         if (length > 1.0)
             target = std::min(target, length - 0.5);
         restart_at(target);
@@ -603,7 +735,9 @@ std::span<const ui::Hint> VideoViewer::hints() const
     static constexpr ui::Hint kBasic[] = {
         {ui::Button::cross, "Play / pause"},
         {ui::Button::dpad, "Seek, volume"},
+        {ui::Button::l2, "1 min", ui::Button::r2},
         {ui::Button::triangle, "Full screen"},
+        {ui::Button::options, "Menu"},
         {ui::Button::circle, "Back"},
     };
     static constexpr ui::Hint kTracks[] = {
@@ -612,6 +746,7 @@ std::span<const ui::Hint> VideoViewer::hints() const
         {ui::Button::l1, "Sound", ui::Button::r1},
         {ui::Button::square, "Subtitles"},
         {ui::Button::triangle, "Full screen"},
+        {ui::Button::options, "Menu"},
         {ui::Button::circle, "Back"},
     };
     static constexpr ui::Hint kSubtitles[] = {
@@ -619,6 +754,7 @@ std::span<const ui::Hint> VideoViewer::hints() const
         {ui::Button::dpad, "Seek, volume"},
         {ui::Button::square, "Subtitles"},
         {ui::Button::triangle, "Full screen"},
+        {ui::Button::options, "Menu"},
         {ui::Button::circle, "Back"},
     };
     const bool sounds = sound_streams_.size() > 1;
@@ -643,7 +779,8 @@ gfx::Color VideoViewer::ink(gfx::Color colour) const
 // HDR10 while an HDR film plays in full screen, SDR otherwise (D68).
 void VideoViewer::sync_hdr()
 {
-    const bool want = fullscreen_ && hdr_film_ && hdr_ != nullptr && !closing_ && engine_;
+    const bool want = fullscreen_ && hdr_film_ && hdr_ != nullptr && !closing_ && engine_ &&
+                      !menu_.is_open();
     if (want == hdr_on_)
         return;
     if (want)
@@ -677,12 +814,25 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     gfx::Rect shown = area;
     if (texture_ != 0 && texture_width_ > 0 && texture_height_ > 0)
     {
-        const float scale = std::min(area.w / static_cast<float>(texture_width_),
+        const float fit = std::min(area.w / static_cast<float>(texture_width_),
+                                   area.h / static_cast<float>(texture_height_));
+        const float cover = std::max(area.w / static_cast<float>(texture_width_),
                                      area.h / static_cast<float>(texture_height_));
+        const bool filling = fill_ && fullscreen_;
+        const float scale = filling ? cover : fit;
         const float w = static_cast<float>(texture_width_) * scale;
         const float h = static_cast<float>(texture_height_) * scale;
         shown = {area.x + (area.w - w) / 2.0f, area.y + (area.h - h) / 2.0f, w, h};
-        canvas.list.image(texture_, shown, gfx::kFullUv, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gfx::Rect uv = gfx::kFullUv;
+        if (filling)
+        {
+            // Only the part inside the screen is drawn: the texture rectangle shrinks to it.
+            const float keep_u = std::min(1.0f, area.w / w);
+            const float keep_v = std::min(1.0f, area.h / h);
+            uv = {(1.0f - keep_u) / 2.0f, (1.0f - keep_v) / 2.0f, keep_u, keep_v};
+            shown = area;
+        }
+        canvas.list.image(texture_, shown, uv, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
     }
     else if (!engine_->has_video())
     {
@@ -693,7 +843,8 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
                  30.0f, ink(kMuted), gfx::Align::center);
     }
 
-    const bool bar = overlay_ > 0.0f || paused_ || ended_;
+    // The bar stays while the menu or a delay is being set: the menu and the panel are drawn with it.
+    const bool bar = overlay_ > 0.0f || paused_ || ended_ || menu_.visible() || adjust_ != Adjust::none;
     const double at = position();
 
     // Subtitles, with a dark edge so that they read on any picture.
@@ -818,6 +969,22 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
             canvas.list.rounded_rect({track.x, track.y, std::max(8.0f, fill), track.h}, 4.0f,
                                      ink(paint.theme().primary));
     }
+    if (adjust_ != Adjust::none)
+    {
+        const std::string label = std::string(adjust_ == Adjust::subtitles ? "Subtitle delay "
+                                                                          : "Sound delay ") +
+                                  signed_seconds(adjust_ == Adjust::subtitles ? subtitle_delay_
+                                                                              : sound_delay_);
+        const float panel_w = 560.0f;
+        const gfx::Rect box{area.x + (area.w - panel_w) / 2.0f, area.y + area.h / 2.0f - 70.0f,
+                            panel_w, 140.0f};
+        canvas.list.rounded_rect(box, 16.0f, ink({0.0f, 0.0f, 0.0f, 0.78f}));
+        ui::text(canvas.list, regular, label, box.x + box.w / 2.0f, box.y + 62.0f, 36.0f,
+                 ink(kWhite), gfx::Align::center);
+        ui::text(canvas.list, regular, "Left / right: 0.1 s     Cross: done", box.x + box.w / 2.0f,
+                 box.y + 108.0f, 22.0f, ink(kMuted), gfx::Align::center);
+    }
+    menu_.draw(canvas);
 }
 
 Match VideoHandler::match(const FileProbe &probe) const

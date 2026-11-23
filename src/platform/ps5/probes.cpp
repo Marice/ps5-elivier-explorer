@@ -1069,7 +1069,7 @@ void fill_packed(const Packing &packing, int x, int y, int w, int h, std::uint32
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-// What a person looks at, per packing (5 s each): white squares top left count the packing;
+// What a person looks at, per packing (10 s each): white squares top left count the packing;
 // eight grey bars from 0 to 4000 nits; red, green, blue and white patches at 203 nits.
 void draw_packed_bars(const Packing &packing, int index, int width, int height)
 {
@@ -1126,7 +1126,7 @@ void probe_hdr_videoout(Display &display, Report &report)
     {
         const Packing &packing = kPackings[index];
         step("hdr videoout: packing %s", packing.name);
-        for (int frame = 0; frame < 60 * 5; ++frame)
+        for (int frame = 0; frame < 60 * 10; ++frame)
         {
             draw_packed_bars(packing, index, display.width(), display.height());
             if (!display.swap())
@@ -1147,7 +1147,7 @@ void probe_hdr_videoout(Display &display, Report &report)
         display.swap();
     }
     trace_video_out_status("after HDR");
-    report.note("hdr", "four packings shown for 5 s each; which one had red, green and blue "
+    report.note("hdr", "four packings shown for 10 s each; which one had red, green and blue "
                        "patches right and grey bars growing brighter, with the TV in HDR?");
 }
 

@@ -28,6 +28,15 @@ override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(
 	$(APP_STATIC_ARCHIVES))
 override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 	$(OPENGL_SDK)/lib/libSceAgcDriver.so $(APP_IMPORT_STUBS))
+# HW_DECODE=1 links an import stub of libSceVideodec2, so that the loader loads the system
+# library when the app starts (the only way a fake-signed module gets it; D47). Off by default:
+# if the firmware does not export a name of the stub, the whole app is refused at start.
+HW_DECODE ?= 0
+ifeq ($(HW_DECODE),1)
+VIDEODEC2_STUB := .deps/video/stubs/libSceVideodec2.so
+override APP_DEFINITIONS := $(strip $(APP_DEFINITIONS) HUI_VIDEODEC2=1)
+override APP_IMPORT_STUBS := $(strip $(APP_IMPORT_STUBS) $(VIDEODEC2_STUB))
+endif
 PACBREW_PACKAGES ?=
 PACBREW_INCLUDE_PATHS ?=
 PACBREW_STATIC_ARCHIVES ?=
@@ -61,7 +70,7 @@ RUNTIME_INPUTS := tools/rebuild-libc.sh tools/build-host-tools.sh tools/ninja-bu
 	$(wildcard tooling/native/runtime/*.txt)
 HOST_UNIT_TEST := build/tests/unit_tests
 
-.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl video host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
+.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl video videodec2-stub host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
 
 all: app
 build: app
@@ -101,6 +110,10 @@ opengl:
 	@printf '%s\n' '==> [opengl] Preparing the ps5-opengl SDK link group'
 	@bash tools/prepare-opengl.sh
 
+videodec2-stub:
+	@printf '%s\n' '==> [video] Building the libSceVideodec2 import stub (HW_DECODE=1)'
+	@bash tools/make-videodec2-stub.sh >/dev/null
+
 video:
 	@printf '%s\n' '==> [video] Building FFmpeg, dav1d and zlib for the PS5 (once, about ten minutes)'
 	@bash tools/setup-video-dependencies.sh >/dev/null
@@ -129,7 +142,7 @@ $(RUNTIME): $(RUNTIME_INPUTS)
 	@printf '%s\n' '==> [libc] Generating the missing or outdated runtime'
 	@bash tools/rebuild-libc.sh
 
-app: $(RUNTIME) opengl video
+app: $(RUNTIME) opengl video $(if $(filter 1,$(HW_DECODE)),videodec2-stub)
 	@printf '%s\n' '==> [app] Compiling, linking, signing, and assembling the app folder'
 	@bash tools/build.sh Folder
 

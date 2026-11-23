@@ -6,7 +6,8 @@
 // the answer (docs/decision-log.md, D41 and D44). The request is one word or several joined with
 // '+', for example "memory+upload", or "safe". Probes that only read and measure can be combined;
 // a probe that changes the display (an HDR surface) ends the launch and always runs alone, so
-// that what went wrong, if anything, is known.
+// that what went wrong, if anything, is known. So does `decoder-bind`, which calls into a system
+// library of which only the names are known.
 
 #pragma once
 
@@ -30,6 +31,7 @@ struct ProbePlan
     bool upload = false;       // what it costs to upload a 4K video frame to textures
     bool egl = false;          // EGL extensions and surface formats the driver offers
     bool decoder_load = false; // can libSceVideodec2 be loaded and its functions found
+    bool decoder_bind = false; // call the one read-only function the HW_DECODE=1 build imports
     HdrMode hdr = HdrMode::none;
 };
 

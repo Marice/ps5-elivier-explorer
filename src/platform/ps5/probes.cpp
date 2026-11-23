@@ -514,6 +514,44 @@ void probe_decoder_load(Report &report)
     }
 }
 
+// ---- the decoder's library, bound at build time ----------------------------------------------
+
+#ifdef HUI_VIDEODEC2
+// Declared here, from the field order and types of EVO Player's sce_videodec2.h (read, not
+// copied): a size, the size of the shared memory the decoder wants (written by the call), and a
+// pointer to that memory (an input of a later call, unused here). The service refuses a wrong
+// `size`; it is the first field and must equal the struct's size.
+struct ComputeMemoryInfo
+{
+    std::uint64_t size;
+    std::uint64_t cpu_gpu_size;
+    void *cpu_gpu;
+};
+static_assert(sizeof(ComputeMemoryInfo) == 24, "the layout the system library expects");
+
+extern "C" int32_t sceVideodec2QueryComputeMemoryInfo(ComputeMemoryInfo *memory);
+
+// The one call of this build: it only asks how much memory a compute queue would want. If the
+// app got this far the loader found libSceVideodec2 (it is a needed library of the app); the call
+// shows whether the function is really bound and what the system says.
+void probe_decoder_bind(Report &report)
+{
+    step("decoder-bind: sceVideodec2QueryComputeMemoryInfo (read-only, struct of %zu bytes)",
+         sizeof(ComputeMemoryInfo));
+    ComputeMemoryInfo info{};
+    info.size = sizeof(info);
+    const int32_t rc = sceVideodec2QueryComputeMemoryInfo(&info);
+    report.add_hex("decoder-bind", "query_compute_memory_rc", static_cast<std::uint32_t>(rc));
+    report.add("decoder-bind", "cpu_gpu_size_bytes", static_cast<std::int64_t>(info.cpu_gpu_size));
+    report.add("decoder-bind", "struct_size_sent", static_cast<std::int64_t>(info.size));
+}
+#else
+void probe_decoder_bind(Report &report)
+{
+    report.note("decoder-bind", "this build has no libSceVideodec2 import; build with HW_DECODE=1");
+}
+#endif
+
 // ---- an HDR surface --------------------------------------------------------------------------
 
 struct HdrAttempt
@@ -642,6 +680,11 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
     if (plan.decoder_load)
     {
         probe_decoder_load(report);
+        log.flush();
+    }
+    if (plan.decoder_bind)
+    {
+        probe_decoder_bind(report);
         log.flush();
     }
     if (plan.hdr != probe::HdrMode::none)

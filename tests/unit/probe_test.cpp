@@ -67,6 +67,23 @@ TEST(ProbePlan, AnHdrAttemptRunsAloneBecauseItEndsTheLaunch)
     EXPECT_FALSE(parse_probe_plan("safe+hdr:pq10", plan, &error));
 }
 
+TEST(ProbePlan, TheDecoderBindRunsAloneAndIsNotPartOfSafe)
+{
+    ProbePlan plan;
+    std::string error;
+    ASSERT_TRUE(parse_probe_plan("decoder-bind", plan, &error)) << error;
+    EXPECT_TRUE(plan.decoder_bind);
+    EXPECT_FALSE(plan.memory);
+    EXPECT_EQ(describe(plan), "decoder-bind");
+
+    ASSERT_TRUE(parse_probe_plan("safe", plan, &error));
+    EXPECT_FALSE(plan.decoder_bind); // `safe` only reads and measures
+
+    EXPECT_FALSE(parse_probe_plan("memory+decoder-bind", plan, &error));
+    EXPECT_NE(error.find("alone"), std::string::npos) << error;
+    EXPECT_FALSE(parse_probe_plan("decoder-bind+decoder-load", plan, &error));
+}
+
 TEST(ProbePlan, RefusesWhatItDoesNotKnow)
 {
     ProbePlan plan;

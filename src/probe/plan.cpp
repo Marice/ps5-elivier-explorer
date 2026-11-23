@@ -29,7 +29,7 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
     if (name.size() > kMaxNameLength)
         return fail(error, "The probe name is too long");
 
-    bool hdr_asked = false;
+    bool alone_asked = false; // a probe that must be the only one
     int tokens = 0;
     std::size_t start = 0;
     while (start <= name.size())
@@ -59,6 +59,11 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
         {
             plan.decoder_load = true;
         }
+        else if (token == "decoder-bind")
+        {
+            plan.decoder_bind = true;
+            alone_asked = true;
+        }
         else if (token == "decoder-query")
         {
             return fail(error, "decoder-query is not built yet");
@@ -74,7 +79,7 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
                 plan.hdr = HdrMode::fp16;
             else
                 return fail(error, "Unknown HDR mode '" + std::string(mode) + "'");
-            hdr_asked = true;
+            alone_asked = true;
         }
         else
         {
@@ -82,8 +87,9 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
         }
         start = end + 1;
     }
-    if (hdr_asked && tokens != 1)
-        return fail(error, "An HDR probe changes the display and must run alone");
+    if (alone_asked && tokens != 1)
+        return fail(error, "This probe changes the display or calls a system library and must "
+                           "run alone");
     return true;
 }
 
@@ -101,6 +107,7 @@ std::string describe(const ProbePlan &plan)
     add(plan.upload, "upload");
     add(plan.egl, "egl");
     add(plan.decoder_load, "decoder-load");
+    add(plan.decoder_bind, "decoder-bind");
     switch (plan.hdr)
     {
     case HdrMode::pq10:

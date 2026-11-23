@@ -142,10 +142,6 @@ class VideoViewer final : public Viewer
     int texture_height_ = 0;
     hui::video::VideoPicture picture_; // the last one taken, a buffer to reuse
     int pictures_shown_ = 0;
-    int traced_updates_ = 0;     // trace lines for the first updates after the first picture
-    float stats_clock_ = 0.0f;  // seconds since the last trace line
-    int stats_shown_ = 0;       // pictures_shown_ at the last trace line
-    int stats_late_ = 0;
 
     std::string error_;
     std::vector<SubtitleSource> subtitle_sources_; // [0] is "Off"

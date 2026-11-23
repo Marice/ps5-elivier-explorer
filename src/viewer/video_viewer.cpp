@@ -134,13 +134,6 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
     { return source->read_range(path, offset, buffer, size); };
     std::string reason;
     hui::video::EngineOptions options;
-    if (hui_heap_capacity != nullptr)
-    {
-        int direct = 0;
-        const std::size_t capacity = hui_heap_capacity(&direct);
-        hui::explorer::trace("film: heap %zu MiB of %s memory", capacity >> 20,
-                             direct != 0 ? "direct" : "flexible");
-    }
     // With the 1 GiB heap (D54) films up to 4K are decoded: a 4K picture at 16 bits a channel is
     // 66 MB, so the budget holds three of them, the conversion is split over four threads and
     // the decoder gets six (assumptions to tune on the console, D59). The old 128 MiB heap keeps
@@ -464,8 +457,6 @@ void VideoViewer::show_picture()
         textures_->destroy(texture_);
         texture_ = 0;
     }
-    if (pictures_shown_ == 0)
-        hui::explorer::trace("film: first picture taken %dx%d", picture_.width, picture_.height);
     if (texture_ == 0)
     {
         texture_ = textures_->create_streaming(picture_.width, picture_.height);
@@ -477,8 +468,6 @@ void VideoViewer::show_picture()
             return;
         }
     }
-    if (pictures_shown_ == 0)
-        hui::explorer::trace("film: texture %u made, uploading", texture_);
     if (!textures_->update(texture_, picture_.width, picture_.height, picture_.rgba.data()))
     {
         error_ = "The picture cannot be shown";
@@ -599,32 +588,11 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     }
     if (!engine_)
         return;
-    // The first frames after the first picture: shows whether one was drawn and the sound pumped.
-    if (pictures_shown_ > 0 && traced_updates_ < 3)
-        hui::explorer::trace("film: update %d after the first picture, shown %d", ++traced_updates_,
-                             pictures_shown_);
     if (player_)
         player_->pump(dt);
     else if (!paused_ && !ended_)
         free_clock_ += static_cast<double>(dt);
 
-    // One line a second while it plays, so a console run shows whether it keeps up (D53): pictures
-    // shown, thrown away late and ready, and times the sound had to wait.
-    if (!paused_ && !ended_)
-    {
-        stats_clock_ += dt;
-        if (stats_clock_ >= 1.0f)
-        {
-            const hui::video::PlaybackEngine::Stats stats = engine_->stats();
-            hui::explorer::trace("video t=%.1f shown=%d late=%d ready=%d starved=%llu",
-                                 position(), pictures_shown_ - stats_shown_,
-                                 stats.pictures_late - stats_late_, stats.pictures_ready,
-                                 static_cast<unsigned long long>(stats.starved_reads));
-            stats_shown_ = pictures_shown_;
-            stats_late_ = stats.pictures_late;
-            stats_clock_ = 0.0f;
-        }
-    }
 
     overlay_ = std::max(0.0f, overlay_ - dt);
     note_timer_ = std::max(0.0f, note_timer_ - dt);

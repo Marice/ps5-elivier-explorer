@@ -6,9 +6,6 @@
 
 #include "explorer/trace.hpp"
 
-// The console's heap counters (src/runtime/app_heap.c); absent on a PC, where the trace is off.
-extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
-                               std::size_t *blocks, std::size_t *failures) __attribute__((weak));
 
 #include "video/audio_decoder.hpp"
 #include "video/av_sync.hpp"
@@ -72,11 +69,6 @@ struct PlaybackEngine::Impl
     double drop_audio_before = -1.0;
     bool demux_ended = false;
     bool video_ended = false;
-    bool first_picture_traced = false;
-    int traced_pictures = 0; // trace lines for the first picture and sound chunk only
-    bool first_sound_traced = false;
-    bool first_video_sent = false;
-    bool first_sound_sent = false;
     bool audio_ended = false;
     bool sent_end = false;
 
@@ -349,9 +341,6 @@ struct PlaybackEngine::Impl
     // seek the picture belongs to; one from before the latest seek is dropped.
     void present(const Frame &frame, unsigned generation, bool check_generation)
     {
-        if (!first_picture_traced)
-            hui::explorer::trace("film: first decoded picture %dx%d depth %d", frame.width,
-                                 frame.height, frame.bit_depth);
         const std::size_t picture_bytes =
             static_cast<std::size_t>(frame.width) * frame.height * 4 * sizeof(std::uint16_t);
         {
@@ -374,17 +363,6 @@ struct PlaybackEngine::Impl
             unconvertible = true; // the engine thread ends the picture (it owns the decoder)
             recycle_locked(std::move(picture));
             return;
-        }
-        if (traced_pictures < 8)
-        {
-            std::size_t live = 0, peak = 0, blocks = 0, failures = 0;
-            if (hui_heap_stats != nullptr)
-                hui_heap_stats(&live, &peak, &blocks, &failures);
-            hui::explorer::trace("film: picture %d converted; heap live %zu peak %zu MiB, %zu "
-                                 "failed; limit %d pictures",
-                                 ++traced_pictures, live >> 20, peak >> 20, failures,
-                                 picture_limit);
-            first_picture_traced = true;
         }
         std::lock_guard<std::mutex> lock(mutex);
         if (check_generation && generation != video_generation)
@@ -433,11 +411,6 @@ struct PlaybackEngine::Impl
         if (!audio || audio_ended)
             return false;
         AudioChunk chunk;
-        if (!first_sound_traced)
-        {
-            hui::explorer::trace("film: decoding the first sound");
-            first_sound_traced = true;
-        }
         const ReceiveResult result = audio->receive(chunk);
         if (result == ReceiveResult::end)
         {
@@ -548,13 +521,6 @@ struct PlaybackEngine::Impl
     {
         if (packets.empty())
             return false;
-        bool &traced = is_video ? first_video_sent : first_sound_sent;
-        if (!traced)
-        {
-            hui::explorer::trace("film: first %s packet to its decoder (%zu bytes)",
-                                 is_video ? "video" : "sound", size_of(packets.front()));
-            traced = true;
-        }
         const SendResult sent =
             is_video ? video->send(packets.front()) : audio->send(packets.front());
         if (sent == SendResult::full)
@@ -683,7 +649,6 @@ struct PlaybackEngine::Impl
 
     void run()
     {
-        hui::explorer::trace("film: reader thread runs");
         while (!stopping.load())
         {
             if (!pump())
@@ -726,11 +691,6 @@ class EngineAudioSource final : public audio::Decoder
     int read(float *stereo, int frames) override
     {
         const int written = impl_.read_sound(stereo, frames);
-        if (written > 0 && !first_read_traced_)
-        {
-            hui::explorer::trace("film: first sound read by the player (%d frames)", written);
-            first_read_traced_ = true;
-        }
         return written;
     }
 
@@ -758,7 +718,6 @@ class EngineAudioSource final : public audio::Decoder
     }
 
   private:
-    bool first_read_traced_ = false;
     PlaybackEngine::Impl &impl_;
     PlaybackEngine &engine_;
     std::string empty_;
@@ -792,9 +751,6 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
         return nullptr;
     }
     impl->info = impl->demuxer->info();
-    // The console is the one place where this has crashed without a word: leave a trail
-    // (docs/decision-log.md, D54), a few lines per film.
-    hui::explorer::trace("film: opened, %zu streams", impl->info.streams.size());
     for (const StreamInfo &stream : impl->info.streams)
     {
         if (stream.kind == StreamKind::video && impl->video_index < 0)
@@ -808,7 +764,6 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
                                                     &impl->video_error);
             if (impl->video)
                 hui::explorer::trace("film: video decoder %s", impl->video->name().c_str());
-            hui::explorer::trace("film: video decoder %s", impl->video ? "open" : "refused");
             if (impl->video)
                 impl->video_index = stream.index;
         }
@@ -816,7 +771,6 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
         {
             impl->audio = open_audio_decoder(*impl->demuxer, stream.index, &impl->audio_error,
                                              options.sound_channels);
-            hui::explorer::trace("film: sound decoder %s", impl->audio ? "open" : "refused");
             if (impl->audio)
                 impl->audio_index = stream.index;
         }
@@ -927,7 +881,6 @@ void PlaybackEngine::start()
     if (result != 0)
         result = pthread_create(&impl_->thread, nullptr, &Impl::thread_main, impl_.get());
     impl_->running = result == 0;
-    hui::explorer::trace("film: reader thread %s", impl_->running ? "started" : "NOT started");
 }
 
 void PlaybackEngine::stop()

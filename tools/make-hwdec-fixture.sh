@@ -17,12 +17,13 @@ trap 'rm -rf "$work"' EXIT
 ffmpeg -loglevel error -y -f lavfi -i "testsrc2=size=1920x1080:rate=1:duration=1" -frames:v 1 \
     -c:v libx264 -profile:v high -pix_fmt yuv420p -crf 30 -bsf:v h264_mp4toannexb -f h264 \
     "$work/picture.h264"
-ffmpeg -loglevel error -y -i "$work/picture.h264" -f rawvideo -pix_fmt gray "$work/luma.raw"
+# The luma plane as decoded, untouched: yuv420p, of which the first 1920 x 1080 bytes are Y. (Not
+# `-pix_fmt gray`: that converts limited range to full range, which no decoder does.)
+ffmpeg -loglevel error -y -i "$work/picture.h264" -f rawvideo -pix_fmt yuv420p "$work/luma.raw"
 python3 - "$work/picture.h264" "$work/luma.raw" "$root/src/platform/ps5/hwdec_fixture.inc" <<'PY'
 import sys
 data = open(sys.argv[1], "rb").read()
-luma = open(sys.argv[2], "rb").read()
-assert len(luma) == 1920 * 1080, len(luma)
+luma = open(sys.argv[2], "rb").read()[:1920 * 1080]
 h = 0x811C9DC5
 for b in luma:
     h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF

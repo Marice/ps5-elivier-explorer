@@ -70,6 +70,11 @@ void Report::note(std::string_view probe, std::string_view text)
     add(probe, "note", text);
 }
 
+void Report::insert_front(const Report &other)
+{
+    lines_.insert(lines_.begin(), other.lines_.begin(), other.lines_.end());
+}
+
 std::string Report::text() const
 {
     std::string out;

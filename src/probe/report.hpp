@@ -29,6 +29,9 @@ class Report
     // key "note": a sentence about what was seen or why a step was skipped.
     void note(std::string_view probe, std::string_view text);
 
+    // The lines of `other` go before the ones here (a probe that ran earlier).
+    void insert_front(const Report &other);
+
     const std::vector<std::string> &lines() const
     {
         return lines_;

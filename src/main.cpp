@@ -191,7 +191,8 @@ bool take_request(const char *wanted_verb, std::string *argument)
 // go to dev/probe/report.txt (and the log, line by line as they come), and the app stays up for
 // a while so that the PC can copy them (the storage goes away when the title closes) before it
 // closes itself. A "quit" request ends the wait early.
-void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::string &name)
+void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::string &name,
+                      const hui::probe::Report &early)
 {
     using namespace hui;
     probe::ProbePlan plan;
@@ -203,6 +204,9 @@ void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::st
     report.add("run", "request", name);
     if (probe::parse_probe_plan(name, plan, &error))
     {
+        // decoder-bind ran at the start of main(), before the HEN; it is not called again here.
+        if (!early.lines().empty())
+            plan.decoder_bind = false;
         ps5::run_probes(plan, display, report);
     }
     else
@@ -210,6 +214,7 @@ void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::st
         report.note("run", "refused: " + error);
         sys::log("[HUI] probe refused: %s", error.c_str());
     }
+    report.insert_front(early);
     save::write_atomic(std::string(kDevRoot) + "/probe/report.txt", report.text());
     // A copy beside the trace, where a PC can still read it after the app has closed.
     const std::string trace_file = explorer::trace_path();
@@ -267,6 +272,16 @@ int main()
     explorer::trace("entry; trace in %s", explorer::trace_path());
     // Out of the sandbox before anything else: the HEN must see one thread, and every file the
     // app reads afterwards may live elsewhere.
+    // A probe request is read before anything else: decoder-bind runs now, before the HEN frees
+    // the app, because that is when EVO Player brings its decoders up (docs/decision-log.md, D48).
+    std::string probe_name;
+    probe::Report early_report;
+    const bool probe_asked = take_request("probe", &probe_name);
+    if (probe_asked && probe_name == "decoder-bind")
+    {
+        explorer::trace("probe launch: decoder-bind, before the HEN frees the app");
+        ps5::run_decoder_bind_probe(early_report, "early");
+    }
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
     explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);
@@ -295,11 +310,8 @@ int main()
     explorer::trace("display open %dx%d", display.width(), display.height());
 
     // A probe request turns this launch into a measurement run (docs/CONSOLE_VALIDATION.md).
-    {
-        std::string probe_name;
-        if (take_request("probe", &probe_name))
-            run_probe_launch(display, &resolution, probe_name);
-    }
+    if (probe_asked)
+        run_probe_launch(display, &resolution, probe_name, early_report);
 
     gfx::Renderer renderer;
     gfx::Font regular;

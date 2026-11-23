@@ -153,6 +153,20 @@ TEST(ProbeReport, ALongValueIsCut)
     EXPECT_LE(report.lines()[0].size(), 300u);
 }
 
+TEST(ProbeReport, AnotherReportCanBePutInFront)
+{
+    // A probe that runs before the rest of the app starts keeps its answers in a report of its
+    // own; the launch adds them to the main one.
+    Report early;
+    early.add("decoder-bind", "early_rc", std::int64_t{0});
+    Report report;
+    report.add("run", "request", "decoder-bind");
+    report.insert_front(early);
+    ASSERT_EQ(report.lines().size(), 2u);
+    EXPECT_EQ(report.lines()[0], "probe decoder-bind early_rc=0");
+    EXPECT_EQ(report.lines()[1], "probe run request=decoder-bind");
+}
+
 TEST(ProbeReport, NegativeAndHexValues)
 {
     Report report;

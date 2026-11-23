@@ -531,24 +531,32 @@ static_assert(sizeof(ComputeMemoryInfo) == 24, "the layout the system library ex
 
 extern "C" int32_t sceVideodec2QueryComputeMemoryInfo(ComputeMemoryInfo *memory);
 
-// The one call of this build: it only asks how much memory a compute queue would want. If the
-// app got this far the loader found libSceVideodec2 (it is a needed library of the app); the call
-// shows whether the function is really bound and what the system says.
-void probe_decoder_bind(Report &report)
+// What EVO Player does first (its evo_vdec_native_probe): load sysmodule 207, ignoring the
+// result, then ask how much memory a compute queue would want. The first call into the library
+// is where the previous run faulted; the loader had accepted the library at start.
+void probe_decoder_bind(Report &report, const char *label)
 {
-    step("decoder-bind: sceVideodec2QueryComputeMemoryInfo (read-only, struct of %zu bytes)",
-         sizeof(ComputeMemoryInfo));
+    const std::string prefix = std::string(label) + "_";
+    step("decoder-bind %s: sceSysmoduleLoadModule(207), as EVO Player does first", label);
+    const int sysmodule = sceSysmoduleLoadModule(207);
+    report.add_hex("decoder-bind", prefix + "sysmodule_207_rc",
+                   static_cast<std::uint32_t>(sysmodule));
+    step("decoder-bind %s: sceVideodec2QueryComputeMemoryInfo (read-only, struct of %zu bytes)",
+         label, sizeof(ComputeMemoryInfo));
     ComputeMemoryInfo info{};
     info.size = sizeof(info);
     const int32_t rc = sceVideodec2QueryComputeMemoryInfo(&info);
-    report.add_hex("decoder-bind", "query_compute_memory_rc", static_cast<std::uint32_t>(rc));
-    report.add("decoder-bind", "cpu_gpu_size_bytes", static_cast<std::int64_t>(info.cpu_gpu_size));
-    report.add("decoder-bind", "struct_size_sent", static_cast<std::int64_t>(info.size));
+    report.add_hex("decoder-bind", prefix + "query_compute_memory_rc",
+                   static_cast<std::uint32_t>(rc));
+    report.add("decoder-bind", prefix + "cpu_gpu_size_bytes",
+               static_cast<std::int64_t>(info.cpu_gpu_size));
+    report.add("decoder-bind", prefix + "struct_size_sent", static_cast<std::int64_t>(info.size));
 }
 #else
-void probe_decoder_bind(Report &report)
+void probe_decoder_bind(Report &report, const char *label)
 {
-    report.note("decoder-bind", "this build has no libSceVideodec2 import; build with HW_DECODE=1");
+    report.note("decoder-bind", std::string(label) + ": this build has no libSceVideodec2 import; "
+                                                      "build with HW_DECODE=1");
 }
 #endif
 
@@ -653,6 +661,15 @@ void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
 
 } // namespace
 
+void run_decoder_bind_probe(probe::Report &report, const char *label)
+{
+    LogFollower log(report);
+    g_follower = &log;
+    probe_decoder_bind(report, label);
+    log.flush();
+    g_follower = nullptr;
+}
+
 void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &report)
 {
     LogFollower log(report);
@@ -684,7 +701,7 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
     }
     if (plan.decoder_bind)
     {
-        probe_decoder_bind(report);
+        probe_decoder_bind(report, "late");
         log.flush();
     }
     if (plan.hdr != probe::HdrMode::none)

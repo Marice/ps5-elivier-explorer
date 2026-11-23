@@ -43,7 +43,11 @@ struct SubtitleLine
 struct EngineOptions
 {
     SoftwareLimits limits;
-    int picture_queue = 4;             // converted pictures kept ready (8.3 MB each at 1080p)
+    int picture_queue = 4;             // converted pictures kept ready, at most
+    // Memory for all the pictures the engine holds at once (ready, waiting for room, spare). A
+    // 1080p picture is 16.6 MB, so big pictures get a shorter queue (at least two): the console's
+    // heap is 128 MiB and a film needs its decoder and packets too (docs/decision-log.md, D54).
+    std::size_t picture_budget_bytes = 56u * 1024u * 1024u;
     double audio_queue_seconds = 2.0;  // decoded sound kept ready
 };
 
@@ -105,6 +109,7 @@ class PlaybackEngine
     struct Stats
     {
         int pictures_ready = 0;
+        int pictures_owned = 0;      // ready, held and spare pictures together
         double audio_seconds_ready = 0.0;
         int pictures_late = 0;       // thrown away because their time had passed
         int damaged_video = 0;

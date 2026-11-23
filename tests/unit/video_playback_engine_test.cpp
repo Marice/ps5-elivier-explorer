@@ -99,6 +99,31 @@ TEST(PlaybackEngine, OpensAFileAndReportsItsStreams)
     EXPECT_TRUE(engine->video_error().empty());
 }
 
+TEST(PlaybackEngine, BigPicturesAreQueuedWithinTheMemoryBudget)
+{
+    // The console's heap is 128 MiB; a 1080p picture at 16 bits a channel is 16.6 MB, and ten of
+    // them crashed it (docs/decision-log.md, D54). Here a picture is 160 x 90 x 8 bytes.
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    EngineOptions options;
+    options.picture_budget_bytes = 3u * 160u * 90u * 8u; // room for three pictures in all
+    auto engine = open_engine(bytes, &error, options);
+    ASSERT_TRUE(engine) << error;
+    run_to_idle(*engine);
+    EXPECT_EQ(engine->stats().pictures_ready, 2); // the third is the one held for the queue
+    EXPECT_LE(engine->stats().pictures_owned, 3);
+
+    VideoPicture picture;
+    ASSERT_TRUE(engine->take_picture(0.0, picture));
+    run_to_idle(*engine);
+    EXPECT_LE(engine->stats().pictures_owned, 3); // a returned buffer is not kept beyond it
+
+    auto roomy = open_engine(bytes, &error); // small pictures: the queue's own size rules
+    ASSERT_TRUE(roomy) << error;
+    run_to_idle(*roomy);
+    EXPECT_EQ(roomy->stats().pictures_ready, EngineOptions{}.picture_queue);
+}
+
 TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
 {
     const auto bytes = read_all("h264-aac.mp4");

@@ -6,6 +6,10 @@
 
 #include "explorer/trace.hpp"
 
+// The console's heap counters (src/runtime/app_heap.c); absent on a PC, where the trace is off.
+extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
+                               std::size_t *blocks, std::size_t *failures) __attribute__((weak));
+
 #include "video/audio_decoder.hpp"
 #include "video/av_sync.hpp"
 #include "video/subtitle_decoder.hpp"
@@ -56,6 +60,7 @@ struct PlaybackEngine::Impl
     std::unique_ptr<SubtitleDecoder> subtitle;
     ConvertTables tables;
     std::unique_ptr<VideoPicture> held_picture; // converted, waiting for room in the queue
+    int picture_limit = 0; // pictures the engine may hold in all, from the budget; 0 = not known yet
     AudioChunk held_chunk;
     bool has_held_chunk = false;
     std::deque<Packet> video_packets; // read, waiting for the decoder
@@ -65,7 +70,8 @@ struct PlaybackEngine::Impl
     double drop_audio_before = -1.0;
     bool demux_ended = false;
     bool video_ended = false;
-    bool first_picture_traced = false; // trace lines for the first picture and sound chunk only
+    bool first_picture_traced = false;
+    int traced_pictures = 0; // trace lines for the first picture and sound chunk only
     bool first_sound_traced = false;
     bool first_video_sent = false;
     bool first_sound_sent = false;
@@ -130,9 +136,24 @@ struct PlaybackEngine::Impl
         return std::make_unique<VideoPicture>();
     }
 
+    // How many pictures may wait in the queue: one less than the limit leaves room for the one
+    // that is held, and never fewer than one.
+    int queue_cap_locked() const
+    {
+        if (picture_limit <= 0)
+            return options.picture_queue;
+        return std::max(1, std::min(options.picture_queue, picture_limit - 1));
+    }
+
+    int owned_locked() const
+    {
+        return static_cast<int>(pictures.size() + spare.size()) + (held_picture ? 1 : 0);
+    }
+
     void recycle_locked(std::unique_ptr<VideoPicture> picture)
     {
-        if (picture && spare.size() < 4)
+        if (picture && spare.size() < 4 &&
+            (picture_limit <= 0 || owned_locked() + 1 <= picture_limit))
             spare.push_back(std::move(picture));
     }
 
@@ -151,7 +172,7 @@ struct PlaybackEngine::Impl
     {
         std::lock_guard<std::mutex> lock(mutex);
         bool moved = false;
-        if (held_picture && static_cast<int>(pictures.size()) < options.picture_queue)
+        if (held_picture && static_cast<int>(pictures.size()) < queue_cap_locked())
         {
             pictures.push_back(std::move(held_picture));
             moved = true;
@@ -216,7 +237,11 @@ struct PlaybackEngine::Impl
             audio->flush();
         if (subtitle)
             subtitle->flush();
-        held_picture.reset();
+        {
+            std::lock_guard<std::mutex> lock(mutex); // stats() counts it from another thread
+            recycle_locked(std::move(held_picture));
+            held_picture.reset();
+        }
         held_chunk = AudioChunk{};
         has_held_chunk = false;
         video_packets.clear();
@@ -267,6 +292,14 @@ struct PlaybackEngine::Impl
         if (!first_picture_traced)
             hui::explorer::trace("film: first decoded picture %dx%d depth %d", frame.width,
                                  frame.height, frame.bit_depth);
+        const std::size_t picture_bytes =
+            static_cast<std::size_t>(frame.width) * frame.height * 4 * sizeof(std::uint16_t);
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            const std::size_t fit = options.picture_budget_bytes / std::max<std::size_t>(picture_bytes, 1);
+            picture_limit = static_cast<int>(
+                std::clamp<std::size_t>(fit, 2, static_cast<std::size_t>(options.picture_queue) + 5));
+        }
         std::unique_ptr<VideoPicture> picture = new_picture();
         picture->width = frame.width;
         picture->height = frame.height;
@@ -281,13 +314,19 @@ struct PlaybackEngine::Impl
             video_ended = true;
             return true;
         }
-        if (!first_picture_traced)
+        if (traced_pictures < 8)
         {
-            hui::explorer::trace("film: first picture converted");
+            std::size_t live = 0, peak = 0, blocks = 0, failures = 0;
+            if (hui_heap_stats != nullptr)
+                hui_heap_stats(&live, &peak, &blocks, &failures);
+            hui::explorer::trace("film: picture %d converted; heap live %zu peak %zu MiB, %zu "
+                                 "failed; limit %d pictures",
+                                 ++traced_pictures, live >> 20, peak >> 20, failures,
+                                 picture_limit);
             first_picture_traced = true;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        if (static_cast<int>(pictures.size()) < options.picture_queue)
+        if (static_cast<int>(pictures.size()) < queue_cap_locked())
             pictures.push_back(std::move(picture));
         else
             held_picture = std::move(picture);
@@ -857,6 +896,7 @@ PlaybackEngine::Stats PlaybackEngine::stats() const
     std::lock_guard<std::mutex> lock(impl_->mutex);
     Stats result = impl_->counters;
     result.pictures_ready = static_cast<int>(impl_->pictures.size());
+    result.pictures_owned = impl_->owned_locked();
     result.audio_seconds_ready = impl_->sound_seconds;
     return result;
 }

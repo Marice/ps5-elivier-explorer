@@ -8,6 +8,7 @@
 #include "audio/surround.hpp"
 #include "explorer/source.hpp"
 #include "explorer/trace.hpp"
+#include "video/colour.hpp"
 
 // The console's heap size (src/runtime/app_heap.c); absent on a PC.
 extern "C" std::size_t hui_heap_capacity(int *direct) __attribute__((weak));
@@ -156,6 +157,11 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
                  -1});
     }
     find_subtitles(source, path);
+    hdr_ = context.hdr;
+    for (const hui::video::StreamInfo &stream : engine_->info().streams)
+        if (stream.index == engine_->video_stream() &&
+            stream.colour.transfer == hui::video::Transfer::pq)
+            hdr_film_ = true;
 
     // The sound, when there is somewhere to play it. Without it the engine must not keep
     // decoding sound nobody reads: its queue would fill and hold the picture back.
@@ -219,6 +225,12 @@ VideoViewer::~VideoViewer()
 
 void VideoViewer::close()
 {
+    if (hdr_on_ && hdr_ != nullptr)
+    {
+        hdr_->leave();
+        hdr_on_ = false;
+        hui::explorer::trace("film: HDR10 output off");
+    }
     if (player_)
         player_->stop(); // before the engine: the player holds its sound source
     player_.reset();
@@ -503,6 +515,7 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
     if (touched)
         overlay_ = kOverlaySeconds;
 
+    sync_hdr();
     show_picture();
 
     if (!ended_ && engine_->ended() && (!player_ || player_->finished()))
@@ -541,6 +554,37 @@ std::span<const ui::Hint> VideoViewer::hints() const
     return kBasic;
 }
 
+// In HDR10 mode the display reads PQ BT.2020 codes, so what is drawn over the film is drawn in
+// those: white at 203 nits (D68). The film itself is not passed through here.
+gfx::Color VideoViewer::ink(gfx::Color colour) const
+{
+    if (!hdr_on_)
+        return colour;
+    const hui::video::Rgb mapped = hui::video::sdr_to_hdr10({colour.r, colour.g, colour.b});
+    return {mapped.r, mapped.g, mapped.b, colour.a};
+}
+
+// HDR10 while an HDR film plays in full screen, SDR otherwise (D68).
+void VideoViewer::sync_hdr()
+{
+    const bool want = fullscreen_ && hdr_film_ && hdr_ != nullptr && !closing_ && engine_;
+    if (want == hdr_on_)
+        return;
+    if (want)
+    {
+        hdr_on_ = hdr_->enter();
+        hui::explorer::trace("film: HDR10 output %s", hdr_on_ ? "on" : "refused");
+    }
+    else
+    {
+        hdr_->leave();
+        hdr_on_ = false;
+        hui::explorer::trace("film: HDR10 output off");
+    }
+    if (engine_)
+        engine_->set_hdr_passthrough(hdr_on_);
+}
+
 void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &area) const
 {
     canvas.list.rounded_rect(area, 0.0f, kBlack);
@@ -549,7 +593,7 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     if (!engine_)
     {
         paint.body(error_.empty() ? "Nothing is playing" : error_.c_str(), area.x + 24.0f,
-                   area.y + 64.0f, 28.0f, kWhite);
+                   area.y + 64.0f, 28.0f, ink(kWhite));
         return;
     }
 
@@ -570,7 +614,7 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
                                      ? std::string("Sound only")
                                      : "No picture: " + engine_->video_error();
         ui::text(canvas.list, regular, note, area.x + area.w / 2.0f, area.y + area.h / 2.0f,
-                 30.0f, kMuted, gfx::Align::center);
+                 30.0f, ink(kMuted), gfx::Align::center);
     }
 
     const bool bar = overlay_ > 0.0f || paused_ || ended_;
@@ -602,8 +646,8 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
                 {-2.0f, 0.0f}, {2.0f, 0.0f}, {0.0f, -2.0f}, {0.0f, 2.0f}};
             for (const auto &edge : kEdge)
                 ui::text(canvas.list, regular, line, cx + edge[0], y + edge[1], size,
-                         {0.0f, 0.0f, 0.0f, 0.85f}, gfx::Align::center);
-            ui::text(canvas.list, regular, line, cx, y, size, kWhite, gfx::Align::center);
+                         ink({0.0f, 0.0f, 0.0f, 0.85f}), gfx::Align::center);
+            ui::text(canvas.list, regular, line, cx, y, size, ink(kWhite), gfx::Align::center);
             y += step;
         }
         if (cue->align == hui::video::CueAlign::top)
@@ -617,12 +661,15 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     // The control bar: what is playing, the time, the progress and the tracks in use.
     const gfx::Rect panel{area.x, area.y + area.h - bar_height, area.w, kBarHeight};
     canvas.list.rounded_rect({panel.x, panel.y, panel.w, bar_height}, 0.0f,
-                             {0.0f, 0.0f, 0.0f, 0.62f});
+                             ink({0.0f, 0.0f, 0.0f, 0.62f}));
     if (fullscreen_)
     {
         // Light glyphs and white labels on the dark bar, whatever the theme.
         ui::GlyphStyle glyphs = ui::GlyphStyle::dark();
-        glyphs.label = kWhite;
+        glyphs.label = ink(kWhite);
+        glyphs.body = ink(glyphs.body);
+        glyphs.edge = ink(glyphs.edge);
+        glyphs.ink = ink(glyphs.ink);
         ui::HintLayout layout;
         layout.cy = area.y + area.h - kHintBand / 2.0f - 8.0f;
         const std::span<const ui::Hint> row = hints();
@@ -633,7 +680,7 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     const float x = panel.x + inset;
     const float width = panel.w - 2.0f * inset;
     ui::text(canvas.list, regular, fit(regular, name_, 30.0f, width), x, panel.y + 40.0f, 30.0f,
-             kWhite);
+             ink(kWhite));
 
     std::string info;
     for (const hui::video::StreamInfo &stream : engine_->info().streams)
@@ -647,7 +694,7 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
             if (engine_->video_decoder_name().rfind("hardware", 0) == 0)
                 info += " (hardware)";
             if (stream.colour.transfer == hui::video::Transfer::pq)
-                info += " HDR (shown as SDR)";
+                info += hdr_on_ ? " HDR10" : " HDR (shown as SDR)";
         }
     }
     const int sound = engine_->audio_stream();
@@ -663,27 +710,27 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
         info += std::string(info.empty() ? "" : "     ") + "Subtitles: " + chosen.label;
     }
     ui::text(canvas.list, regular, fit(regular, info, 22.0f, width), x, panel.y + 74.0f, 22.0f,
-             kMuted);
+             ink(kMuted));
 
     const double length = engine_->duration();
     std::string clock = format_clock(at);
     if (length > 0.0)
         clock += " / " + format_clock(length);
     const char *state = ended_ ? "Ended" : paused_ ? "Paused" : "Playing";
-    ui::text(canvas.list, mono, clock, x, panel.y + 122.0f, 30.0f, kWhite);
+    ui::text(canvas.list, mono, clock, x, panel.y + 122.0f, 30.0f, ink(kWhite));
     std::string right = state;
     if (player_)
         right += "     Volume " + std::to_string(player_->volume()) + " of 10";
-    ui::text(canvas.list, regular, right, x + width, panel.y + 122.0f, 24.0f, kMuted,
+    ui::text(canvas.list, regular, right, x + width, panel.y + 122.0f, 24.0f, ink(kMuted),
              gfx::Align::right);
     const gfx::Rect track{x, panel.y + 90.0f, width, 8.0f};
-    canvas.list.rounded_rect(track, 4.0f, {1.0f, 1.0f, 1.0f, 0.25f});
+    canvas.list.rounded_rect(track, 4.0f, ink({1.0f, 1.0f, 1.0f, 0.25f}));
     if (length > 0.0)
     {
         const float fill = track.w * static_cast<float>(std::clamp(at / length, 0.0, 1.0));
         if (fill > 1.0f)
             canvas.list.rounded_rect({track.x, track.y, std::max(8.0f, fill), track.h}, 4.0f,
-                                     paint.theme().primary);
+                                     ink(paint.theme().primary));
     }
 }
 

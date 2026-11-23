@@ -23,11 +23,13 @@
 #include "gfx/canvas.hpp"
 #include "gfx/gl_texture_host.hpp"
 #include "gfx/image.hpp"
+#include "gfx/hdr_presenter.hpp"
 #include "gfx/renderer.hpp"
 #include "platform/ps5/audio_out.hpp"
 #include "platform/ps5/crash.hpp"
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
+#include "platform/ps5/hdr_output.hpp"
 #include "platform/ps5/hw_video.hpp"
 #include "platform/ps5/surround_out.hpp"
 #include "platform/ps5/video_out_hook.hpp"
@@ -368,6 +370,9 @@ int main()
     sys::log("[HUI] music songs=%d", tracks);
     ps5::AudioOut audio_out;
     ps5::SurroundOut surround_out; // opened by a film with surround sound, closed after it
+    // HDR10 for an HDR film in full screen (D68, D71): the frame is then packed for the scanout.
+    gfx::HdrPresenter hdr_presenter;
+    ps5::HdrOut hdr_out(hdr_presenter, display.width(), display.height());
     audio_out.start(mixer);
     audio::SoundBank sounds;
     const auto bank = sounds.load(assets + "/audio/sfx");
@@ -378,7 +383,7 @@ int main()
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
     hui::gfx::GlTextureHost texture_host;
-    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out);
+    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out, &hdr_out);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");
@@ -486,10 +491,15 @@ int main()
         shell.compose(renderer);
         if (frames == 0)
             explorer::trace("frame 1: composed");
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // In HDR10 mode the frame goes into the presenter's target and is packed from there.
+        const GLuint target =
+            hdr_out.active() ? hdr_presenter.begin(display.width(), display.height()) : 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, target);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        renderer.present(0, display.width(), display.height());
+        renderer.present(target, display.width(), display.height());
+        if (target != 0)
+            hdr_presenter.finish(display.width(), display.height());
         if (frames == 0)
             explorer::trace("frame 1: presented");
         if (tour && !tour->capture().empty())

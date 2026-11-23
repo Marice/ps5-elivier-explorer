@@ -121,6 +121,7 @@ struct PlaybackEngine::Impl
     std::condition_variable convert_wake;
     pthread_t convert_thread{};
     std::atomic<bool> convert_running{false};
+    std::atomic<bool> hdr_passthrough{false}; // HDR10 output on: PQ pictures keep their signal
 
     // ---- the thread ----
     pthread_t thread{};
@@ -359,6 +360,7 @@ struct PlaybackEngine::Impl
             picture_limit = static_cast<int>(
                 std::clamp<std::size_t>(fit, 2, static_cast<std::size_t>(options.picture_queue) + 5));
         }
+        tables.pq_passthrough = hdr_passthrough.load();
         std::unique_ptr<VideoPicture> picture = new_picture();
         picture->width = frame.width;
         picture->height = frame.height;
@@ -1024,6 +1026,11 @@ int PlaybackEngine::read_sound(float *out, int frames)
 int PlaybackEngine::sound_channels() const
 {
     return impl_->options.sound_channels;
+}
+
+void PlaybackEngine::set_hdr_passthrough(bool on)
+{
+    impl_->hdr_passthrough.store(on);
 }
 
 bool PlaybackEngine::set_sound_channels(int channels)

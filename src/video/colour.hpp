@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace hui::video
 {
 
@@ -79,5 +81,21 @@ float hlg_to_linear(float signal);
 // the knee alone. A target at or above the source peak changes nothing. The black level is taken
 // as 0.
 float tone_map_bt2390(float pq_signal, float source_peak_nits, float target_peak_nits);
+
+// HDR10 output (D71): an SDR colour (sRGB-encoded, BT.709) as the PQ signal of BT.2020 with its
+// white at `white_nits` (203 is the reference white of ITU-R BT.2408): what the bar and the
+// subtitles over an HDR film are drawn with.
+Rgb sdr_to_hdr10(const Rgb &srgb, float white_nits = 203.0f);
+
+// A 10:10:10:2 HDR10 pixel as the console's scanout reads it from the GL's RGBA8 output: the word
+// 3 << 30 | R << 20 | G << 10 | B, little-endian, in a BGRA surface. Codes are 0..1023.
+struct Hdr10Bytes
+{
+    std::uint8_t gl_red;
+    std::uint8_t gl_green;
+    std::uint8_t gl_blue;
+    std::uint8_t gl_alpha;
+};
+Hdr10Bytes pack_hdr10(std::uint32_t red, std::uint32_t green, std::uint32_t blue);
 
 } // namespace hui::video

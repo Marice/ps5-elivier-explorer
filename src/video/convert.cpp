@@ -147,6 +147,16 @@ bool readable(const Frame &frame, std::size_t out_pitch_bytes, std::size_t out_b
     return out_pitch_bytes >= static_cast<std::size_t>(width) * 4 * out_bytes;
 }
 
+// A 10-bit code (0..1023) as an output channel: the top 8 bits, or scaled to the full 16.
+inline std::uint8_t store_code10(std::uint8_t * /*tag*/, std::int32_t code)
+{
+    return static_cast<std::uint8_t>(code >> 2);
+}
+inline std::uint16_t store_code10(std::uint16_t * /*tag*/, std::int32_t code)
+{
+    return static_cast<std::uint16_t>((code * 65535 + 511) / 1023);
+}
+
 template <typename Out>
 void convert_rows(const Frame &frame, const ConvertTables &tables, Out *out_rgba,
                   std::size_t out_pitch_bytes, int first_row, int end_row)
@@ -188,7 +198,13 @@ void convert_rows(const Frame &frame, const ConvertTables &tables, Out *out_rgba
             const std::int32_t r = clamp_to(static_cast<std::int32_t>(red >> 16), k.scale);
             const std::int32_t g = clamp_to(static_cast<std::int32_t>(green >> 16), k.scale);
             const std::int32_t b = clamp_to(static_cast<std::int32_t>(blue >> 16), k.scale);
-            if (hdr)
+            if (hdr && tables.pq_passthrough)
+            {
+                out[0] = store_code10(out, r);
+                out[1] = store_code10(out, g);
+                out[2] = store_code10(out, b);
+            }
+            else if (hdr)
             {
                 out[0] = store(out, tables.pq_to_sdr[static_cast<std::size_t>(r)]);
                 out[1] = store(out, tables.pq_to_sdr[static_cast<std::size_t>(g)]);

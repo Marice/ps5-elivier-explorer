@@ -27,6 +27,9 @@ struct ConvertTables
 {
     std::array<std::uint8_t, 1024> pq_to_sdr{};
     bool pq_ready = false;
+    // HDR10 output is on (D71): a PQ picture keeps its signal (BT.2020, PQ) instead of being
+    // tone-mapped, so that the display shows it as it was mastered.
+    bool pq_passthrough = false;
 };
 
 // Converts `frame` to RGBA8 (alpha 255) at its own size, rows top to bottom, `out_pitch_bytes`

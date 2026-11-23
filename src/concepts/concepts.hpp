@@ -13,6 +13,7 @@
 namespace hui::viewer
 {
 class HandlerRegistry;
+class HdrOutput;
 class TextureHost;
 } // namespace hui::viewer
 namespace hui::audio
@@ -35,7 +36,8 @@ void set_about_qr(std::uint32_t (*load_png)(const std::string &path), std::strin
 // an eight-channel output for films with surround sound (the console's; null elsewhere: those
 // films then play in stereo). Null in tests; a viewer that needs one says so on screen.
 void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer,
-                           hui::audio::SurroundSink *surround = nullptr);
+                           hui::audio::SurroundSink *surround = nullptr,
+                           hui::viewer::HdrOutput *hdr = nullptr);
 // A handler registry other than the built-in one (tests); null brings the built-in one back.
 void set_explorer_registry(const hui::viewer::HandlerRegistry *registry);
 // The folders the explorer's two panes open in (the console's /data and /mnt; temporary ones in

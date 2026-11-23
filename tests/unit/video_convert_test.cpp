@@ -515,3 +515,36 @@ TEST(VideoConvert, APoolOfThreadsGivesTheSamePictureAsOneThread)
 }
 
 } // namespace
+
+namespace
+{
+
+TEST(VideoConvert, WithHdrOutputAPqPictureKeepsItsSignal)
+{
+    // 10-bit limited range BT.2020 greys: black, a middle code and white come out as the PQ codes
+    // they are (0, about half, 1023), not tone-mapped down to an SDR screen.
+    ColourInfo pq;
+    pq.matrix = Matrix::bt2020;
+    pq.range = Range::limited;
+    pq.transfer = Transfer::pq;
+    const int ys[3] = {64, 502, 940};
+    const int expected[3] = {0, 32767, 65535};
+    for (int i = 0; i < 3; ++i)
+    {
+        const Picture p = flat(4, 2, 10, 1, 1, ys[i], 512, 512);
+        ConvertTables tables;
+        tables.pq_passthrough = true;
+        std::vector<std::uint16_t> out(4 * 2 * 4);
+        ASSERT_TRUE(convert_to_rgba16(p.frame(pq), tables, out.data(), 4 * 8));
+        EXPECT_NEAR(out[0], expected[i], 80) << "Y " << ys[i];
+        EXPECT_EQ(out[0], out[1]);
+        EXPECT_EQ(out[3], 65535);
+        ConvertTables mapped; // without HDR output the same white is tone-mapped below full
+        std::vector<std::uint16_t> sdr(4 * 2 * 4);
+        ASSERT_TRUE(convert_to_rgba16(p.frame(pq), mapped, sdr.data(), 4 * 8));
+        if (i == 1)
+            EXPECT_NE(sdr[0], out[0]);
+    }
+}
+
+} // namespace

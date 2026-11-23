@@ -131,4 +131,31 @@ float tone_map_bt2390(float pq_signal, float source_peak_nits, float target_peak
     return e2 * source_pq;
 }
 
+Rgb sdr_to_hdr10(const Rgb &srgb, float white_nits)
+{
+    const auto linear = [](float value) {
+        const float v = clamp01(value);
+        return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+    };
+    const float r = linear(srgb.r);
+    const float g = linear(srgb.g);
+    const float b = linear(srgb.b);
+    // BT.709 to BT.2020 primaries (ITU-R BT.2087), on linear light.
+    const float r2 = 0.6274f * r + 0.3293f * g + 0.0433f * b;
+    const float g2 = 0.0691f * r + 0.9195f * g + 0.0114f * b;
+    const float b2 = 0.0164f * r + 0.0880f * g + 0.8956f * b;
+    const float scale = white_nits / 10000.0f;
+    return {linear_to_pq(r2 * scale), linear_to_pq(g2 * scale), linear_to_pq(b2 * scale)};
+}
+
+Hdr10Bytes pack_hdr10(std::uint32_t red, std::uint32_t green, std::uint32_t blue)
+{
+    const std::uint32_t word =
+        (3u << 30) | (std::min(red, 1023u) << 20) | (std::min(green, 1023u) << 10) |
+        std::min(blue, 1023u);
+    return {static_cast<std::uint8_t>((word >> 16) & 0xFF),
+            static_cast<std::uint8_t>((word >> 8) & 0xFF), static_cast<std::uint8_t>(word & 0xFF),
+            static_cast<std::uint8_t>(word >> 24)};
+}
+
 } // namespace hui::video

@@ -121,6 +121,9 @@ class PlaybackEngine
     // Only before start() and before make_audio_source(); false otherwise, or when the decoder
     // cannot (the sound then stays as it was).
     bool set_sound_channels(int channels);
+    // HDR10 output is on (D71): pictures converted from now on keep a PQ signal instead of being
+    // tone-mapped. Any time, from the game thread; the few pictures already queued stay as they are.
+    void set_hdr_passthrough(bool on);
 
     // Everything is decoded and shown or heard.
     bool ended() const;

@@ -204,6 +204,7 @@ const hui::viewer::HandlerRegistry *g_registry = nullptr;
 hui::viewer::TextureHost *g_textures = nullptr;
 hui::audio::Mixer *g_mixer = nullptr;
 hui::audio::SurroundSink *g_surround = nullptr;
+hui::viewer::HdrOutput *g_hdr = nullptr;
 
 const hui::viewer::HandlerRegistry &registry()
 {
@@ -1045,6 +1046,7 @@ class ExplorerScreen final : public app::Concept
         context.textures = g_textures;
         context.mixer = g_mixer;
         context.surround = g_surround;
+        context.hdr = g_hdr;
         hui::viewer::FileRef file;
         file.source = &source_;
         file.path = path;
@@ -1304,11 +1306,12 @@ class ExplorerScreen final : public app::Concept
 } // namespace
 
 void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer,
-                           hui::audio::SurroundSink *surround)
+                           hui::audio::SurroundSink *surround, hui::viewer::HdrOutput *hdr)
 {
     g_textures = textures;
     g_mixer = mixer;
     g_surround = surround;
+    g_hdr = hdr;
 }
 
 void set_explorer_registry(const hui::viewer::HandlerRegistry *registry)

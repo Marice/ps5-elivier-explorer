@@ -49,6 +49,18 @@ class TextureHost
                         const std::uint16_t *rgba) = 0;
 };
 
+// The display's HDR10 mode (the console's; D71). Only one viewer uses it at a time.
+class HdrOutput
+{
+  public:
+    virtual ~HdrOutput() = default;
+    // Switches the display to HDR10; false when it cannot (the film then stays tone-mapped).
+    virtual bool enter() = 0;
+    // Back to SDR. Safe when not in HDR.
+    virtual void leave() = 0;
+    virtual bool active() const = 0;
+};
+
 // What a viewer may use. Anything may be null (a test, or a build without it): a viewer that
 // needs one it does not have says so on screen instead of failing.
 struct ViewerContext
@@ -62,6 +74,8 @@ struct ViewerContext
     hui::audio::Mixer *mixer = nullptr;
     // An eight-channel output for films with more than two channels (D65); null: stereo.
     hui::audio::SurroundSink *surround = nullptr;
+    // HDR10 output for HDR films in full screen (D68); null: HDR films are tone-mapped to SDR.
+    HdrOutput *hdr = nullptr;
 };
 
 // The file to open: where it is and what the listing knew of it.

@@ -86,6 +86,31 @@ class ThreadedSink final : public hui::audio::SurroundSink
     std::thread thread_;
 };
 
+// The display's HDR mode, counted.
+class FakeHdr final : public hui::viewer::HdrOutput
+{
+  public:
+    bool enter() override
+    {
+        ++entered;
+        on = accept;
+        return accept;
+    }
+    void leave() override
+    {
+        ++left;
+        on = false;
+    }
+    bool active() const override
+    {
+        return on;
+    }
+    bool accept = true;
+    bool on = false;
+    int entered = 0;
+    int left = 0;
+};
+
 class VideoViewerTest : public ConceptFixture
 {
   protected:
@@ -98,6 +123,7 @@ class VideoViewerTest : public ConceptFixture
         context.textures = textures;
         context.mixer = with_mixer ? &mixer_ : nullptr;
         context.surround = surround_;
+        context.hdr = hdr_;
         FileRef file;
         file.source = &source_;
         file.path = path;
@@ -148,6 +174,7 @@ class VideoViewerTest : public ConceptFixture
     hui::explorer::LocalSource source_;
     hui::audio::Mixer mixer_;
     hui::audio::SurroundSink *surround_ = nullptr;
+    hui::viewer::HdrOutput *hdr_ = nullptr;
 };
 
 TEST_F(VideoViewerTest, WritesOneLineASecondToTheTraceWhilePlaying)
@@ -232,6 +259,48 @@ TEST_F(VideoViewerTest, AStereoFilmOrARefusedOutputStaysOnTheMixer)
     EXPECT_EQ(sink.opened, 1);
     EXPECT_EQ(sink.pulls.load(), 0);
     ASSERT_TRUE(run_until(*refused, [&] { return refused->position() > 0.1; })); // the mixer's clock
+}
+
+TEST_F(VideoViewerTest, AnHdrFilmTurnsHdrOutputOnInFullScreenOnly)
+{
+    FakeHdr hdr;
+    hdr_ = &hdr;
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/hevc-main10-hdr.mkv", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_EQ(hdr.entered, 0); // in the window the film is tone-mapped as before
+    tick(*viewer, press(hui::Action::north));
+    EXPECT_EQ(hdr.entered, 1);
+    EXPECT_TRUE(viewer->hdr_output());
+    EXPECT_GT(drawn(*viewer), 0u);
+    tick(*viewer, press(hui::Action::north)); // back to the window: SDR again
+    EXPECT_EQ(hdr.left, 1);
+    EXPECT_FALSE(viewer->hdr_output());
+    tick(*viewer, press(hui::Action::north));
+    EXPECT_EQ(hdr.entered, 2);
+    tick(*viewer, press(hui::Action::back)); // closing leaves HDR
+    EXPECT_EQ(hdr.left, 2);
+    EXPECT_FALSE(hdr.on);
+}
+
+TEST_F(VideoViewerTest, AnSdrFilmOrARefusedHdrModeStaysSdr)
+{
+    FakeHdr hdr;
+    hdr_ = &hdr;
+    FakeTextures textures;
+    const auto sdr = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*sdr, [&] { return sdr->pictures_shown() >= 1; }));
+    tick(*sdr, press(hui::Action::north));
+    EXPECT_TRUE(sdr->fullscreen());
+    EXPECT_EQ(hdr.entered, 0);
+
+    hdr.accept = false;
+    const auto refused = open(kDir + "/hevc-main10-hdr.mkv", &textures);
+    ASSERT_TRUE(run_until(*refused, [&] { return refused->pictures_shown() >= 1; }));
+    tick(*refused, press(hui::Action::north));
+    EXPECT_EQ(hdr.entered, 1);
+    EXPECT_FALSE(refused->hdr_output());
 }
 
 TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)

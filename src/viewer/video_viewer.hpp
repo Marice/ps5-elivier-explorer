@@ -51,6 +51,10 @@ class VideoViewer final : public Viewer
     {
         return fullscreen_;
     }
+    bool hdr_output() const
+    {
+        return hdr_on_;
+    }
     void close() override;
 
     const std::string &error() const
@@ -97,6 +101,8 @@ class VideoViewer final : public Viewer
     void cycle_subtitles(double at);
     void cycle_sound(int step, double at);
     std::vector<hui::video::SubtitleLine> subtitle_lines(double at) const;
+    gfx::Color ink(gfx::Color colour) const; // a colour drawn over the film, as the display reads it
+    void sync_hdr();
 
     std::string name_;
     TextureHost *textures_ = nullptr;
@@ -125,6 +131,9 @@ class VideoViewer final : public Viewer
     bool ended_ = false;
     bool closing_ = false;
     bool fullscreen_ = false;
+    HdrOutput *hdr_ = nullptr; // the display's HDR10 mode, when there is one
+    bool hdr_film_ = false;    // the picture is PQ (HDR10)
+    bool hdr_on_ = false;      // the display is in HDR10 for this film now
     float overlay_ = 4.0f; // seconds the control bar stays up after the last input
     float pending_seek_ = 0.0f;
     float seek_cooldown_ = 0.0f;

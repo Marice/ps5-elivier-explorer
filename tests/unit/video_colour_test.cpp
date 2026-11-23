@@ -143,3 +143,49 @@ TEST(VideoColour, ToneMapIsMonotonicAndNeverBrighterThanTheTarget)
 }
 
 } // namespace
+
+namespace
+{
+
+using namespace hui::video;
+
+TEST(VideoColourHdr, SdrWhiteBecomesTheHdr10CodeOf203Nits)
+{
+    const Rgb white = sdr_to_hdr10({1.0f, 1.0f, 1.0f});
+    const float expected = linear_to_pq(203.0f / 10000.0f); // about 0.58
+    EXPECT_NEAR(white.r, expected, 1e-4f);
+    EXPECT_NEAR(white.g, expected, 1e-4f);
+    EXPECT_NEAR(white.b, expected, 1e-4f);
+    const Rgb black = sdr_to_hdr10({0.0f, 0.0f, 0.0f});
+    EXPECT_NEAR(black.r, linear_to_pq(0.0f), 1e-6f);
+}
+
+TEST(VideoColourHdr, Bt709RedLandsInsideBt2020)
+{
+    // Pure BT.709 red is not pure BT.2020 red: some green and blue come in (0.627, 0.069, 0.016
+    // of the light), and red stays the largest.
+    const Rgb red = sdr_to_hdr10({1.0f, 0.0f, 0.0f});
+    EXPECT_GT(red.r, red.g);
+    EXPECT_GT(red.g, red.b);
+    EXPECT_GT(red.g, 0.0f);
+    EXPECT_NEAR(pq_to_linear(red.r) * 10000.0f, 0.6274f * 203.0f, 1.0f);
+}
+
+TEST(VideoColourHdr, PackingPutsRedHighAndBlueLowInBgraBytes)
+{
+    // What the console showed right (D71): word = 3 << 30 | R << 20 | G << 10 | B, written as the
+    // GL's (red, green, blue, alpha) = (byte 2, byte 1, byte 0, byte 3).
+    const Hdr10Bytes bytes = pack_hdr10(1023, 0, 0);
+    const std::uint32_t word = (3u << 30) | (1023u << 20);
+    EXPECT_EQ(bytes.gl_red, (word >> 16) & 0xFF);
+    EXPECT_EQ(bytes.gl_green, (word >> 8) & 0xFF);
+    EXPECT_EQ(bytes.gl_blue, word & 0xFF);
+    EXPECT_EQ(bytes.gl_alpha, word >> 24);
+    const Hdr10Bytes blue = pack_hdr10(0, 0, 1023);
+    EXPECT_EQ(blue.gl_blue, 0xFF);
+    EXPECT_EQ(blue.gl_green, 0x03);
+    EXPECT_EQ(blue.gl_red, 0x00);
+    EXPECT_EQ(blue.gl_alpha, 0xC0);
+}
+
+} // namespace

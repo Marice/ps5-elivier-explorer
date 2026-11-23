@@ -1,11 +1,11 @@
-// EliVier Explorer - Audio decoding for video files: any codec in, stereo float at 48 kHz out.
+// EliVier Explorer - Audio decoding for video files: any codec in, stereo or 7.1 float at 48 kHz out.
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // libavcodec decodes and libswresample does the rest in one pass: it mixes 5.1 and 7.1 down to
-// stereo (scaled so that the sum cannot clip) and resamples to the mixer's rate with FFmpeg's
-// polyphase filter, which is far better than the linear resampler the MP3 player uses. The
-// console's output is stereo only for now (docs/decision-log.md, D43).
+// stereo at the usual weights (D56), or lays them out on eight channels for a surround output
+// (D65), and resamples to the mixer's rate with FFmpeg's polyphase filter, which is far better
+// than the linear resampler the MP3 player uses.
 
 #pragma once
 
@@ -23,13 +23,19 @@ namespace hui::video
 // The rate of the mixer and of the console's audio output (src/platform/ps5/audio_out.cpp).
 inline constexpr int kAudioOutputRate = 48000;
 
+// The console's eight-channel order, as VLC and MPC for PS5 feed it (D65; to be confirmed on a
+// receiver with the speakers probe): front left, front right, centre, LFE, the side pair (where
+// a 5.1 film's surrounds go), the back pair.
+constexpr int kSurroundChannels = 8;
+
 struct AudioChunk
 {
-    std::vector<float> stereo; // interleaved L, R at kAudioOutputRate
-    double pts = kNoTimestamp; // seconds from the start of the file, of the first frame
+    std::vector<float> samples; // interleaved, `channels` per frame, at kAudioOutputRate
+    int channels = 2;           // 2 (L, R) or kSurroundChannels
+    double pts = kNoTimestamp;  // seconds from the start of the file, of the first frame
     int frames() const
     {
-        return static_cast<int>(stereo.size() / 2);
+        return static_cast<int>(samples.size() / static_cast<std::size_t>(channels));
     }
 };
 
@@ -59,7 +65,9 @@ float limit_sample(float sample);
 
 // Null and `error` filled when the stream cannot be played: no decoder for the codec, more than
 // eight channels, or a sample rate outside 8 to 192 kHz.
+// `channels` is what comes out: 2 (mixed down when the source has more) or kSurroundChannels
+// (in the order above; a source with fewer channels leaves the rest silent).
 std::unique_ptr<AudioDecoder> open_audio_decoder(const Demuxer &demuxer, int stream,
-                                                 std::string *error);
+                                                 std::string *error, int channels = 2);
 
 } // namespace hui::video

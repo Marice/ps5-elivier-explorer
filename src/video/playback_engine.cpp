@@ -248,7 +248,7 @@ struct PlaybackEngine::Impl
             audio.reset();
             std::string reason;
             if (want_audio >= 0)
-                audio = open_audio_decoder(*demuxer, want_audio, &reason);
+                audio = open_audio_decoder(*demuxer, want_audio, &reason, options.sound_channels);
             std::lock_guard<std::mutex> lock(mutex);
             audio_index = audio ? want_audio : -1;
             audio_error = want_audio >= 0 && !audio ? reason : std::string();
@@ -466,9 +466,10 @@ struct PlaybackEngine::Impl
             {
                 const auto cut = static_cast<std::size_t>((drop_audio_before - chunk.pts) *
                                                           kAudioOutputRate);
-                const std::size_t values = std::min(cut * 2, chunk.stereo.size());
-                chunk.stereo.erase(chunk.stereo.begin(),
-                                   chunk.stereo.begin() + static_cast<std::ptrdiff_t>(values));
+                const std::size_t values =
+                    std::min(cut * static_cast<std::size_t>(chunk.channels), chunk.samples.size());
+                chunk.samples.erase(chunk.samples.begin(),
+                                    chunk.samples.begin() + static_cast<std::ptrdiff_t>(values));
                 chunk.pts = drop_audio_before;
             }
         }
@@ -629,6 +630,49 @@ struct PlaybackEngine::Impl
         return worked;
     }
 
+    // Takes up to `frames` frames of sound from the queue, interleaved as the decoder made them
+    // (options.sound_channels a frame). Fewer at the end; audio::Decoder::kTryLater when nothing
+    // is queued yet (a seek being served, the decoder behind): the caller writes nothing and its
+    // clock waits.
+    int read_sound(float *out, int frames)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        int written = 0;
+        while (written < frames && !sound.empty())
+        {
+            const AudioChunk &chunk = sound.front();
+            const auto channels = static_cast<std::size_t>(chunk.channels);
+            const std::size_t available =
+                static_cast<std::size_t>(chunk.frames()) - sound_front_offset;
+            const std::size_t count =
+                std::min<std::size_t>(available, static_cast<std::size_t>(frames - written));
+            std::memcpy(out + static_cast<std::size_t>(written) * channels,
+                        chunk.samples.data() + sound_front_offset * channels,
+                        count * channels * sizeof(float));
+            written += static_cast<int>(count);
+            sound_front_offset += count;
+            sound_seconds -= static_cast<double>(count) / kAudioOutputRate;
+            if (sound_front_offset >= static_cast<std::size_t>(chunk.frames()))
+            {
+                sound.pop_front();
+                sound_front_offset = 0;
+            }
+        }
+        if (sound_seconds < 0.0)
+            sound_seconds = 0.0;
+        if (written < frames)
+        {
+            // Nothing (more) queued. At the end that is the end. Otherwise frames already copied
+            // are handed over, and with none the reader is told to ask again.
+            const bool at_end = audio_done && !awaiting_audio;
+            if (at_end || audio_index < 0 || written > 0)
+                return written;
+            ++counters.starved_reads;
+            return audio::Decoder::kTryLater;
+        }
+        return written;
+    }
+
     static void *thread_main(void *self)
     {
         static_cast<Impl *>(self)->run();
@@ -679,44 +723,11 @@ class EngineAudioSource final : public audio::Decoder
 
     int read(float *stereo, int frames) override
     {
-        std::lock_guard<std::mutex> lock(impl_.mutex);
-        int written = 0;
-        while (written < frames && !impl_.sound.empty())
-        {
-            const AudioChunk &chunk = impl_.sound.front();
-            const std::size_t available =
-                static_cast<std::size_t>(chunk.frames()) - impl_.sound_front_offset;
-            const std::size_t count =
-                std::min<std::size_t>(available, static_cast<std::size_t>(frames - written));
-            std::memcpy(stereo + static_cast<std::size_t>(written) * 2,
-                        chunk.stereo.data() + impl_.sound_front_offset * 2,
-                        count * 2 * sizeof(float));
-            written += static_cast<int>(count);
-            impl_.sound_front_offset += count;
-            impl_.sound_seconds -= static_cast<double>(count) / kAudioOutputRate;
-            if (impl_.sound_front_offset >= static_cast<std::size_t>(chunk.frames()))
-            {
-                impl_.sound.pop_front();
-                impl_.sound_front_offset = 0;
-            }
-        }
-        if (impl_.sound_seconds < 0.0)
-            impl_.sound_seconds = 0.0;
+        const int written = impl_.read_sound(stereo, frames);
         if (written > 0 && !first_read_traced_)
         {
             hui::explorer::trace("film: first sound read by the player (%d frames)", written);
             first_read_traced_ = true;
-        }
-        if (written < frames)
-        {
-            // Nothing (more) queued. At the end that is the end. Otherwise the decoder is behind
-            // or a seek is still being served: frames already copied are handed over, and with
-            // none the player is told to ask again; it writes nothing and its clock waits.
-            const bool at_end = impl_.audio_done && !impl_.awaiting_audio;
-            if (at_end || impl_.audio_index < 0 || written > 0)
-                return written;
-            ++impl_.counters.starved_reads;
-            return kTryLater;
         }
         return written;
     }
@@ -801,7 +812,8 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
         }
         else if (stream.kind == StreamKind::audio && impl->audio_index < 0)
         {
-            impl->audio = open_audio_decoder(*impl->demuxer, stream.index, &impl->audio_error);
+            impl->audio = open_audio_decoder(*impl->demuxer, stream.index, &impl->audio_error,
+                                             options.sound_channels);
             hui::explorer::trace("film: sound decoder %s", impl->audio ? "open" : "refused");
             if (impl->audio)
                 impl->audio_index = stream.index;
@@ -1004,11 +1016,21 @@ std::vector<SubtitleLine> PlaybackEngine::subtitles_at(double seconds) const
     return lines;
 }
 
+int PlaybackEngine::read_sound(float *out, int frames)
+{
+    return impl_->read_sound(out, frames);
+}
+
+int PlaybackEngine::sound_channels() const
+{
+    return impl_->options.sound_channels;
+}
+
 std::unique_ptr<audio::Decoder> PlaybackEngine::make_audio_source()
 {
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
-        if (impl_->audio_index < 0 || impl_->source_taken)
+        if (impl_->options.sound_channels != 2 || impl_->audio_index < 0 || impl_->source_taken)
             return nullptr;
         impl_->source_taken = true;
     }

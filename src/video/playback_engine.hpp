@@ -52,6 +52,9 @@ struct EngineOptions
     // Threads a picture's conversion is split over, the engine's own included (ConvertPool). A
     // 4K picture takes about 40 ms on one console core (D53, measured at 1080p).
     int convert_threads = 1;
+    // Channels of the sound that comes out: 2 for the mixer (audio::AudioPlayer, through
+    // make_audio_source()), or kSurroundChannels for a surround output (read_sound()).
+    int sound_channels = 2;
     // Packets read ahead and not yet decoded. A 4K film's bitrate wants more than a 1080p one's.
     std::size_t max_buffered_bytes = 16u * 1024u * 1024u;
 };
@@ -110,6 +113,10 @@ class PlaybackEngine
     // for the sound (writing silence would make the sound trail the picture by that much); 0
     // only at the end. At most one at a time, and it must be gone before the engine is.
     std::unique_ptr<audio::Decoder> make_audio_source();
+    // The sound for a surround output: up to `frames` frames of sound_channels() samples each.
+    // Fewer at the end; audio::Decoder::kTryLater when nothing is ready yet.
+    int read_sound(float *out, int frames);
+    int sound_channels() const;
 
     // Everything is decoded and shown or heard.
     bool ended() const;

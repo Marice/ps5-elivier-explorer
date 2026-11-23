@@ -89,4 +89,21 @@ ffmpeg "${quiet[@]}" -f lavfi -i "$video" -f lavfi -i "$(tone 440)" -f lavfi -i 
 ffmpeg "${quiet[@]}" -f lavfi -i "$(tone 440)" \
     -af "pan=5.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0" -c:a ac3 -b:a 96k "$out/ac3-surround.mkv"
 
+# FLAC 7.1 and 5.1 (back), audio only, lossless: the n-th channel in FFmpeg's order (n from 1) is a
+# 440 Hz tone peaking at 0.01 x n, so a test can tell where each channel lands (surround, D65).
+ladder() { # $1 = layout, $2 = channel names in FFmpeg order
+    local pan="$1" i=0
+    for name in $2; do
+        i=$((i + 1))
+        pan+="|$name=$(printf '0.%02d' $((i * 4)))*c0"
+    done
+    printf '%s' "$pan"
+}
+ffmpeg "${quiet[@]}" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.5" \
+    -af "volume=2.0,$(printf 'pan=%s' "$(ladder 7.1 'FL FR FC LFE BL BR SL SR')")" -c:a flac \
+    "$out/flac-7.1-ladder.mkv"
+ffmpeg "${quiet[@]}" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.5" \
+    -af "volume=2.0,$(printf 'pan=%s' "$(ladder 5.1 'FL FR FC LFE BL BR')")" -c:a flac \
+    "$out/flac-5.1-back-ladder.mkv"
+
 ls -l "$out"

@@ -1,4 +1,4 @@
-// EliVier Explorer - Audio decoding for video files: any codec in, stereo float at 48 kHz out.
+// EliVier Explorer - Audio decoding for video files: any codec in, stereo or 7.1 float at 48 kHz out.
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -38,8 +38,9 @@ std::string error_text(int code)
 class FfmpegAudioDecoder final : public AudioDecoder
 {
   public:
-    FfmpegAudioDecoder(AVCodecContext *context, std::string name, StreamTiming timing)
-        : context_(context), name_(std::move(name)), timing_(timing), scratch_(av_frame_alloc())
+    FfmpegAudioDecoder(AVCodecContext *context, std::string name, StreamTiming timing, int channels)
+        : context_(context), name_(std::move(name)), timing_(timing), channels_(channels),
+          scratch_(av_frame_alloc())
     {
     }
 
@@ -139,12 +140,14 @@ class FfmpegAudioDecoder final : public AudioDecoder
         const int room = swr_get_out_samples(resampler_, 0);
         if (room <= 0)
             return ReceiveResult::end;
-        chunk.stereo.assign(static_cast<std::size_t>(room) * 2, 0.0f);
-        std::uint8_t *out = reinterpret_cast<std::uint8_t *>(chunk.stereo.data());
+        chunk.channels = channels_;
+        chunk.samples.assign(static_cast<std::size_t>(room) * channels_, 0.0f);
+        std::uint8_t *out = reinterpret_cast<std::uint8_t *>(chunk.samples.data());
         const int count = swr_convert(resampler_, &out, room, nullptr, 0);
         if (count <= 0)
             return ReceiveResult::end;
-        chunk.stereo.resize(static_cast<std::size_t>(count) * 2);
+        chunk.samples.resize(static_cast<std::size_t>(count) * channels_);
+        reorder(chunk);
         limit(chunk);
         chunk.pts = kNoTimestamp;
         return ReceiveResult::frame;
@@ -161,6 +164,14 @@ class FfmpegAudioDecoder final : public AudioDecoder
             return false;
         if (layout.order == AV_CHANNEL_ORDER_UNSPEC)
             av_channel_layout_default(&layout, frame.ch_layout.nb_channels);
+        // On eight channels a 5.1 film's surrounds belong on the surround speakers of a 5.1 set,
+        // whether the file calls them side or back (both players put them there, D65).
+        const AVChannelLayout back = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+        if (channels_ == kSurroundChannels && av_channel_layout_compare(&layout, &back) == 0)
+        {
+            av_channel_layout_uninit(&layout);
+            layout = AV_CHANNEL_LAYOUT_5POINT1;
+        }
 
         const bool same = resampler_ != nullptr && input_format_ == frame.format &&
                           input_rate_ == frame.sample_rate &&
@@ -172,11 +183,23 @@ class FfmpegAudioDecoder final : public AudioDecoder
         }
 
         swr_free(&resampler_);
-        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-        int result = swr_alloc_set_opts2(&resampler_, &stereo, AV_SAMPLE_FMT_FLT, kAudioOutputRate,
+        // Eight channels come out in FFmpeg's 7.1 order (FL FR FC LFE BL BR SL SR) and are put in
+        // the console's order afterwards (reorder()).
+        AVChannelLayout output = channels_ == kSurroundChannels
+                                     ? AVChannelLayout(AV_CHANNEL_LAYOUT_7POINT1)
+                                     : AVChannelLayout(AV_CHANNEL_LAYOUT_STEREO);
+        int result = swr_alloc_set_opts2(&resampler_, &output, AV_SAMPLE_FMT_FLT, kAudioOutputRate,
                                          &layout, static_cast<AVSampleFormat>(frame.format),
                                          frame.sample_rate, 0, nullptr);
-        if (result >= 0)
+        if (result >= 0 && channels_ == kSurroundChannels)
+        {
+            // Nothing is mixed down: the channels pass at their own level, and a missing one is
+            // silent. Mono goes to the centre, as FFmpeg places it.
+            mixing_down_ = layout.nb_channels > kSurroundChannels;
+            av_opt_set_double(resampler_, "rematrix_maxval", 8.0, 0);
+            result = swr_init(resampler_);
+        }
+        else if (result >= 0)
         {
             // A mix-down at the usual weights (centre and surrounds at -3 dB), not scaled so that
             // the loudest possible sum fits: that made 5.1 films 7.7 dB quieter than stereo ones
@@ -221,8 +244,9 @@ class FfmpegAudioDecoder final : public AudioDecoder
             av_frame_unref(scratch_);
             return -1;
         }
-        chunk.stereo.assign(static_cast<std::size_t>(room) * 2, 0.0f);
-        std::uint8_t *out = reinterpret_cast<std::uint8_t *>(chunk.stereo.data());
+        chunk.channels = channels_;
+        chunk.samples.assign(static_cast<std::size_t>(room) * channels_, 0.0f);
+        std::uint8_t *out = reinterpret_cast<std::uint8_t *>(chunk.samples.data());
         const int count =
             swr_convert(resampler_, &out, room,
                         const_cast<const std::uint8_t **>(scratch_->extended_data),
@@ -237,9 +261,24 @@ class FfmpegAudioDecoder final : public AudioDecoder
         av_frame_unref(scratch_);
         if (count < 0)
             return -1;
-        chunk.stereo.resize(static_cast<std::size_t>(count) * 2);
+        chunk.samples.resize(static_cast<std::size_t>(count) * channels_);
+        reorder(chunk);
         limit(chunk);
         return count;
+    }
+
+    // FFmpeg's 7.1 order to the console's: the side pair (FFmpeg's 6 and 7) before the back pair
+    // (FFmpeg's 4 and 5).
+    void reorder(AudioChunk &chunk) const
+    {
+        if (channels_ != kSurroundChannels)
+            return;
+        for (std::size_t i = 0; i + 8 <= chunk.samples.size(); i += 8)
+        {
+            float *frame = chunk.samples.data() + i;
+            std::swap(frame[4], frame[6]);
+            std::swap(frame[5], frame[7]);
+        }
     }
 
     // Only a mix-down can go over full scale (its matrix is not scaled down, D56).
@@ -247,13 +286,14 @@ class FfmpegAudioDecoder final : public AudioDecoder
     {
         if (!mixing_down_)
             return;
-        for (float &sample : chunk.stereo)
+        for (float &sample : chunk.samples)
             sample = limit_sample(sample);
     }
 
     AVCodecContext *context_;
     std::string name_;
     StreamTiming timing_;
+    int channels_ = 2; // 2 or kSurroundChannels
     AVFrame *scratch_;
     SwrContext *resampler_ = nullptr;
     bool mixing_down_ = false;
@@ -279,13 +319,15 @@ float limit_sample(float sample)
 }
 
 std::unique_ptr<AudioDecoder> open_audio_decoder(const Demuxer &demuxer, int stream,
-                                                 std::string *error)
+                                                 std::string *error, int channels)
 {
     const auto fail = [error](const std::string &message) -> std::unique_ptr<AudioDecoder> {
         if (error != nullptr)
             *error = message;
         return nullptr;
     };
+    if (channels != 2 && channels != kSurroundChannels)
+        return fail("Sound comes out as stereo or as eight channels");
     const AVCodecParameters *parameters = demuxer.parameters(stream);
     if (parameters == nullptr || parameters->codec_type != AVMEDIA_TYPE_AUDIO)
         return fail("That is not an audio stream");
@@ -315,7 +357,8 @@ std::unique_ptr<AudioDecoder> open_audio_decoder(const Demuxer &demuxer, int str
         avcodec_free_context(&context);
         return fail("Cannot start the audio decoder (" + error_text(result) + ")");
     }
-    return std::make_unique<FfmpegAudioDecoder>(context, codec->name, demuxer.timing(stream));
+    return std::make_unique<FfmpegAudioDecoder>(context, codec->name, demuxer.timing(stream),
+                                                channels);
 }
 
 } // namespace hui::video

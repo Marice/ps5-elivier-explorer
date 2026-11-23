@@ -37,7 +37,8 @@ int audio_stream(const Demuxer &demuxer, int nth)
 
 struct Sound
 {
-    std::vector<float> stereo; // everything that came out, interleaved
+    std::vector<float> stereo; // everything that came out, interleaved (`channels` per frame)
+    int channels = 2;
     std::vector<double> chunk_pts;
     std::vector<int> chunk_frames;
     std::string decoder;
@@ -45,13 +46,22 @@ struct Sound
     int damaged = 0;
     int frames() const
     {
-        return static_cast<int>(stereo.size() / 2);
+        return static_cast<int>(stereo.size() / static_cast<std::size_t>(channels));
+    }
+    float peak_of_channel(int channel) const
+    {
+        float peak = 0.0f;
+        for (std::size_t i = static_cast<std::size_t>(channel); i < stereo.size();
+             i += static_cast<std::size_t>(channels))
+            peak = std::max(peak, std::fabs(stereo[i]));
+        return peak;
     }
 };
 
-Sound decode_audio(const std::vector<std::uint8_t> &bytes, int nth = 0)
+Sound decode_audio(const std::vector<std::uint8_t> &bytes, int nth = 0, int channels = 2)
 {
     Sound sound;
+    sound.channels = channels;
     auto demuxer = Demuxer::open(reader_for(bytes), bytes.size(), &sound.error);
     if (!demuxer)
         return sound;
@@ -61,7 +71,7 @@ Sound decode_audio(const std::vector<std::uint8_t> &bytes, int nth = 0)
         sound.error = "no such audio stream";
         return sound;
     }
-    auto decoder = open_audio_decoder(*demuxer, stream, &sound.error);
+    auto decoder = open_audio_decoder(*demuxer, stream, &sound.error, channels);
     if (!decoder)
         return sound;
     sound.decoder = decoder->name();
@@ -73,7 +83,8 @@ Sound decode_audio(const std::vector<std::uint8_t> &bytes, int nth = 0)
         {
             sound.chunk_pts.push_back(chunk.pts);
             sound.chunk_frames.push_back(chunk.frames());
-            sound.stereo.insert(sound.stereo.end(), chunk.stereo.begin(), chunk.stereo.end());
+            EXPECT_EQ(chunk.channels, sound.channels);
+            sound.stereo.insert(sound.stereo.end(), chunk.samples.begin(), chunk.samples.end());
             got = decoder->receive(chunk);
         }
         return got;
@@ -205,6 +216,43 @@ TEST(AudioDecoder, SurroundIsMixedDownAtTheUsualWeights)
     // 0.30 on each side (LFE is left out); the old scaled matrix gave about 0.125 (D56).
     EXPECT_GT(peak_of(sound), 0.25f);
     EXPECT_LT(peak_of(sound), 0.36f);
+}
+
+// The console's eight-channel order, as VLC and MPC for PS5 use it (D65): L R C LFE, then the
+// side pair (a 5.1 film's surrounds), then the back pair. To be confirmed on a receiver.
+TEST(AudioDecoder, SevenOneComesOutInTheConsolesChannelOrder)
+{
+    const Sound sound = decode_audio(read_all("flac-7.1-ladder.mkv"), 0, 8);
+    ASSERT_TRUE(sound.error.empty()) << sound.error;
+    ASSERT_GT(sound.frames(), kAudioOutputRate / 4);
+    // FFmpeg's order is FL FR FC LFE BL BR SL SR, at 0.01 x 1 to 8.
+    const float expected[8] = {0.01f, 0.02f, 0.03f, 0.04f, 0.07f, 0.08f, 0.05f, 0.06f};
+    for (int c = 0; c < 8; ++c)
+        EXPECT_NEAR(sound.peak_of_channel(c), expected[c], 0.003f) << "slot " << c;
+}
+
+TEST(AudioDecoder, AFiveOneFilmsSurroundsGoToTheSidePairWhicheverItsLayoutSays)
+{
+    // 5.1 written as "back": the surrounds still belong on the 5.1 set's surround speakers.
+    const Sound back = decode_audio(read_all("flac-5.1-back-ladder.mkv"), 0, 8);
+    ASSERT_TRUE(back.error.empty()) << back.error;
+    const float expected[8] = {0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.0f, 0.0f};
+    for (int c = 0; c < 8; ++c)
+        EXPECT_NEAR(back.peak_of_channel(c), expected[c], 0.003f) << "slot " << c;
+
+    const Sound side = decode_audio(read_all("ac3-surround.mkv"), 0, 8);
+    ASSERT_TRUE(side.error.empty()) << side.error;
+    EXPECT_GT(side.peak_of_channel(4), 0.08f);
+    EXPECT_GT(side.peak_of_channel(5), 0.08f);
+    EXPECT_LT(side.peak_of_channel(6), 0.001f);
+    EXPECT_LT(side.peak_of_channel(7), 0.001f);
+}
+
+TEST(AudioDecoder, EightChannelsAreNotLimitedSinceNothingIsMixedDown)
+{
+    const Sound sound = decode_audio(read_all("ac3-surround.mkv"), 0, 8);
+    ASSERT_TRUE(sound.error.empty()) << sound.error;
+    EXPECT_NEAR(sound.peak_of_channel(0), 0.125f, 0.02f); // as it is in the file
 }
 
 TEST(AudioDecoder, ChunksFollowOneAnotherInTime)

@@ -176,6 +176,31 @@ TEST(PlaybackEngine, WithItsThreadsRunningASeekLetsNoOldPictureThrough)
     engine->stop();
 }
 
+TEST(PlaybackEngine, SurroundSoundComesOutOnEightChannels)
+{
+    const auto bytes = read_all("ac3-surround.mkv");
+    std::string error;
+    EngineOptions options;
+    options.sound_channels = 8;
+    auto engine = open_engine(bytes, &error, options);
+    ASSERT_TRUE(engine) << error;
+    EXPECT_EQ(engine->sound_channels(), 8);
+    EXPECT_EQ(engine->make_audio_source(), nullptr); // the mixer's player takes stereo only
+    run_to_idle(*engine);
+    std::vector<float> sound(2048 * 8);
+    const int got = engine->read_sound(sound.data(), 2048);
+    ASSERT_EQ(got, 2048);
+    float surround = 0.0f;
+    float back = 0.0f;
+    for (int i = 0; i < got; ++i)
+    {
+        surround = std::max(surround, std::fabs(sound[static_cast<std::size_t>(i) * 8 + 4]));
+        back = std::max(back, std::fabs(sound[static_cast<std::size_t>(i) * 8 + 6]));
+    }
+    EXPECT_GT(surround, 0.05f); // a 5.1 film's surrounds, on the side pair
+    EXPECT_LT(back, 0.001f);
+}
+
 TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
 {
     const auto bytes = read_all("h264-aac.mp4");

@@ -33,6 +33,7 @@ struct ProbePlan
     bool egl = false;          // EGL extensions and surface formats the driver offers
     bool decoder_load = false; // can libSceVideodec2 be loaded and its functions found
     bool decoder_bind = false; // call the one read-only function the HW_DECODE=1 build imports
+    bool hwdec = false;        // bring a hardware decoder up before the HEN, decode one picture after
     HdrMode hdr = HdrMode::none;
 };
 

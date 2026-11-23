@@ -19,6 +19,10 @@ mkdir -p "$(dirname "$output")"
     "$root/tooling/native/stubs/libSceVideodec2.c"
 # The SONAME is the system library's file name, as in the SDK's own stubs (the converter turns
 # .sprx into .prx for the app's list of needed libraries). Check the name and the symbol first.
-"$sdk/bin/llvm-nm" -D "$output" | grep -q " T sceVideodec2QueryComputeMemoryInfo$" || {
-    echo "the stub does not export sceVideodec2QueryComputeMemoryInfo" >&2; exit 2; }
+symbols=$("$sdk/bin/llvm-nm" -D "$output")
+for name in QueryComputeMemoryInfo AllocateComputeQueue ReleaseComputeQueue QueryDecoderMemoryInfo \
+    CreateDecoder DeleteDecoder Reset Decode Flush; do
+    grep -q " T sceVideodec2$name$" <<< "$symbols" || {
+        echo "the stub does not export sceVideodec2$name" >&2; exit 2; }
+done
 printf '%s\n' "$output"

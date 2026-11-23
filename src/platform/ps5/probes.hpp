@@ -26,6 +26,12 @@ namespace hui::ps5
 // Every step is written to the trace first; a fault in the call leaves the step as the last line.
 void run_decoder_bind_probe(probe::Report &report, const char *label);
 
+// The first half of the hwdec probe, for the start of main() before the HEN (D49, D58): the
+// compute queue, one H.264 decoder up to 1080p (created and reset) and the memory a 4K HEVC Main10
+// decoder would want. What it made stays for the second half, which run_probes() does after the
+// HEN with the display open: one keyframe decoded and its luma compared with FFmpeg's.
+void run_hwdec_bringup(probe::Report &report);
+
 // Runs the probes of `plan` in a fixed order (memory, upload, egl, decoder-load, then an HDR
 // attempt) and adds the answers to `report`. The display must be open: the upload and egl probes
 // use its GL context. An HDR attempt closes the display and leaves it closed; the caller opens a

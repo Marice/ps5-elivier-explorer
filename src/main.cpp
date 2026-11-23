@@ -282,6 +282,11 @@ int main()
         explorer::trace("probe launch: decoder-bind, before the HEN frees the app");
         ps5::run_decoder_bind_probe(early_report, "early");
     }
+    if (probe_asked && probe_name == "hwdec")
+    {
+        explorer::trace("probe launch: hwdec, bringing a decoder up before the HEN frees the app");
+        ps5::run_hwdec_bringup(early_report);
+    }
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
     explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);

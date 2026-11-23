@@ -64,6 +64,17 @@ TEST(ProbePlan, ConvertTimesTheCpuConversionAndCombinesWithTheOthers)
     EXPECT_FALSE(plan.convert); // it needs a second of CPU a time: asked for by name only
 }
 
+TEST(ProbePlan, HwdecRunsAloneBecauseItCallsTheDecoderBeforeTheHen)
+{
+    ProbePlan plan;
+    std::string error;
+    ASSERT_TRUE(parse_probe_plan("hwdec", plan, &error)) << error;
+    EXPECT_TRUE(plan.hwdec);
+    EXPECT_EQ(describe(plan), "hwdec");
+    plan = ProbePlan{};
+    EXPECT_FALSE(parse_probe_plan("hwdec+memory", plan, &error));
+}
+
 TEST(ProbePlan, AnHdrAttemptRunsAloneBecauseItEndsTheLaunch)
 {
     ProbePlan plan;

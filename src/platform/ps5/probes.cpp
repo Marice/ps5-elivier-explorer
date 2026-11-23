@@ -6,6 +6,7 @@
 
 #include "explorer/trace.hpp"
 #include "platform/ps5/system.hpp"
+#include "platform/ps5/videodec2.hpp"
 #include "video/colour.hpp"
 #include "video/convert.hpp"
 #include "video/convert_pool.hpp"
@@ -38,6 +39,8 @@ int sceKernelMunmap(void *address, size_t length);
 int sceKernelAvailableFlexibleMemorySize(size_t *size);
 int sceKernelConfiguredFlexibleMemorySize(size_t *size);
 int sceSysmoduleLoadModule(uint16_t id);
+int sceKernelMapNamedFlexibleMemory(void **address, size_t length, int protection, int flags,
+                                    const char *name);
 // Standard module calls (the PS4 SDK's, unchanged on the PS5).
 int sceKernelLoadStartModule(const char *path, size_t arguments, const void *argument_block,
                              unsigned flags, const void *options, int *result);
@@ -651,19 +654,8 @@ void probe_decoder_load(Report &report)
 // ---- the decoder's library, bound at build time ----------------------------------------------
 
 #ifdef HUI_VIDEODEC2
-// Declared here, from the field order and types of EVO Player's sce_videodec2.h (read, not
-// copied): a size, the size of the shared memory the decoder wants (written by the call), and a
-// pointer to that memory (an input of a later call, unused here). The service refuses a wrong
-// `size`; it is the first field and must equal the struct's size.
-struct ComputeMemoryInfo
-{
-    std::uint64_t size;
-    std::uint64_t cpu_gpu_size;
-    void *cpu_gpu;
-};
-static_assert(sizeof(ComputeMemoryInfo) == 24, "the layout the system library expects");
-
-extern "C" int32_t sceVideodec2QueryComputeMemoryInfo(ComputeMemoryInfo *memory);
+// The layouts are in platform/ps5/videodec2.hpp.
+using videodec2::ComputeMemoryInfo;
 
 // What EVO Player does first (its evo_vdec_native_probe): load sysmodule 207, ignoring the
 // result, then ask how much memory a compute queue would want. The first call into the library
@@ -692,6 +684,246 @@ void probe_decoder_bind(Report &report, const char *label)
     report.note("decoder-bind", std::string(label) + ": this build has no libSceVideodec2 import; "
                                                       "build with HW_DECODE=1");
 }
+#endif
+
+
+// ---- hwdec: a whole hardware decoder, up before the HEN, one picture after --------------------
+
+#ifdef HUI_VIDEODEC2
+namespace hwdec
+{
+#include "platform/ps5/hwdec_fixture.inc"
+
+namespace vd = videodec2;
+
+// What the first half made, for the second half. Nothing is freed: both players found that
+// memory given back does not always come back (D58), and the run ends soon after.
+struct State
+{
+    bool created = false;
+    void *queue = nullptr;
+    void *decoder = nullptr;
+    void *au = nullptr;
+    std::uint64_t au_size = 0;
+    void *frame = nullptr;
+    std::uint64_t frame_size = 0;
+};
+State g_state;
+
+std::uint64_t round_up(std::uint64_t value, std::uint64_t to)
+{
+    return (value + to - 1) / to * to;
+}
+
+// Direct memory as both players take it; null when the console refuses.
+void *direct(Report &report, const char *what, std::uint64_t bytes, std::uint64_t alignment)
+{
+    alignment = std::max<std::uint64_t>(alignment, vd::kMemoryAlignment);
+    bytes = round_up(std::max<std::uint64_t>(bytes, 1), alignment);
+    int64_t start = -1;
+    int rc = sceKernelAllocateDirectMemory(0, sceKernelGetDirectMemorySize(), bytes, alignment,
+                                           vd::kMemoryType, &start);
+    if (rc != 0)
+    {
+        report.add_hex("hwdec", std::string(what) + "_allocate_rc", static_cast<std::uint32_t>(rc));
+        return nullptr;
+    }
+    void *address = nullptr;
+    rc = sceKernelMapDirectMemory(&address, bytes, vd::kMemoryProtection, 0, start, alignment);
+    if (rc != 0 || address == nullptr)
+    {
+        report.add_hex("hwdec", std::string(what) + "_map_rc", static_cast<std::uint32_t>(rc));
+        sceKernelReleaseDirectMemory(start, bytes);
+        return nullptr;
+    }
+    report.add("hwdec", std::string(what) + "_kib", static_cast<std::int64_t>(bytes / 1024));
+    return address;
+}
+
+vd::DecoderConfigInfo config(std::uint32_t codec, std::uint32_t profile, std::uint32_t level,
+                             int width, int height, void *queue)
+{
+    vd::DecoderConfigInfo c{};
+    c.size = sizeof(c);
+    c.resource_type = vd::kResourceCompute;
+    c.codec_type = codec;
+    c.profile = profile;
+    c.max_level = level;
+    c.max_width = width;
+    c.max_height = height;
+    c.max_dpb_frames = 16;
+    c.pipeline_depth = 1;
+    c.compute_queue = reinterpret_cast<std::uint64_t>(queue);
+    c.cpu_affinity = 0x3F;
+    c.cpu_priority = 700;
+    c.optimize_progressive = 1;
+    return c;
+}
+
+void report_memory(Report &report, const std::string &prefix, const vd::DecoderMemoryInfo &m)
+{
+    report.add("hwdec", prefix + "_cpu_kib", static_cast<std::int64_t>(m.cpu_size / 1024));
+    report.add("hwdec", prefix + "_gpu_kib", static_cast<std::int64_t>(m.gpu_size / 1024));
+    report.add("hwdec", prefix + "_cpu_gpu_kib", static_cast<std::int64_t>(m.cpu_gpu_size / 1024));
+    report.add("hwdec", prefix + "_frame_kib", static_cast<std::int64_t>(m.max_frame_size / 1024));
+    report.add("hwdec", prefix + "_frame_alignment", static_cast<std::int64_t>(m.frame_alignment));
+}
+
+void bring_up(Report &report)
+{
+    step("hwdec: sceSysmoduleLoadModule(207)");
+    report.add_hex("hwdec", "sysmodule_rc",
+                   static_cast<std::uint32_t>(sceSysmoduleLoadModule(vd::kSysmodule)));
+
+    step("hwdec: sceVideodec2QueryComputeMemoryInfo");
+    vd::ComputeMemoryInfo compute{};
+    compute.size = sizeof(compute);
+    int32_t rc = sceVideodec2QueryComputeMemoryInfo(&compute);
+    report.add_hex("hwdec", "query_compute_rc", static_cast<std::uint32_t>(rc));
+    if (rc != 0)
+        return;
+    compute.cpu_gpu_size = round_up(compute.cpu_gpu_size, vd::kMemoryAlignment);
+    step("hwdec: compute memory, %llu KiB",
+         static_cast<unsigned long long>(compute.cpu_gpu_size / 1024));
+    compute.cpu_gpu = direct(report, "compute", compute.cpu_gpu_size, vd::kMemoryAlignment);
+    if (compute.cpu_gpu == nullptr)
+        return;
+
+    step("hwdec: sceVideodec2AllocateComputeQueue");
+    vd::ComputeConfigInfo queue_config{};
+    queue_config.size = sizeof(queue_config);
+    rc = sceVideodec2AllocateComputeQueue(&queue_config, &compute, &g_state.queue);
+    report.add_hex("hwdec", "allocate_queue_rc", static_cast<std::uint32_t>(rc));
+    if (rc != 0)
+        return;
+
+    // What 4K HEVC Main10 would want (asked only, nothing made): for the resident decoder later.
+    step("hwdec: sceVideodec2QueryDecoderMemoryInfo, HEVC Main10 3840x2176");
+    const vd::DecoderConfigInfo hevc =
+        config(vd::kCodecHevc, 2, 153, 3840, 2176, g_state.queue);
+    vd::DecoderMemoryInfo hevc_memory{};
+    hevc_memory.size = sizeof(hevc_memory);
+    rc = sceVideodec2QueryDecoderMemoryInfo(&hevc, &hevc_memory);
+    report.add_hex("hwdec", "query_hevc4k_rc", static_cast<std::uint32_t>(rc));
+    if (rc == 0)
+        report_memory(report, "hevc4k", hevc_memory);
+
+    step("hwdec: sceVideodec2QueryDecoderMemoryInfo, AVC High 1920x1088");
+    const vd::DecoderConfigInfo avc = config(vd::kCodecAvc, 100, 51, 1920, 1088, g_state.queue);
+    vd::DecoderMemoryInfo memory{};
+    memory.size = sizeof(memory);
+    rc = sceVideodec2QueryDecoderMemoryInfo(&avc, &memory);
+    report.add_hex("hwdec", "query_avc_rc", static_cast<std::uint32_t>(rc));
+    if (rc != 0)
+        return;
+    report_memory(report, "avc", memory);
+
+    step("hwdec: decoder memory (CPU part from flexible memory)");
+    if (memory.cpu_size > 0)
+    {
+        const std::uint64_t bytes = round_up(memory.cpu_size, vd::kMemoryAlignment);
+        rc = sceKernelMapNamedFlexibleMemory(&memory.cpu, bytes, 0x03, 0, "hui-vdec-cpu");
+        report.add_hex("hwdec", "cpu_map_rc", static_cast<std::uint32_t>(rc));
+        if (rc != 0 || memory.cpu == nullptr)
+            return;
+    }
+    if (memory.gpu_size > 0 &&
+        (memory.gpu = direct(report, "gpu", memory.gpu_size, vd::kMemoryAlignment)) == nullptr)
+        return;
+    if (memory.cpu_gpu_size > 0 &&
+        (memory.cpu_gpu = direct(report, "cpu_gpu", memory.cpu_gpu_size,
+                                 vd::kMemoryAlignment)) == nullptr)
+        return;
+    g_state.frame_size = round_up(memory.max_frame_size, vd::kMemoryAlignment);
+    g_state.frame = direct(report, "frame", g_state.frame_size, memory.frame_alignment);
+    g_state.au_size = sizeof(kFixtureH264);
+    g_state.au = direct(report, "au", g_state.au_size, vd::kMemoryAlignment);
+    if (g_state.frame == nullptr || g_state.au == nullptr)
+        return;
+    // Grey, as VLC clears its pool: a picture that is not written shows as grey, not as noise.
+    std::memset(g_state.frame, 0x80, g_state.frame_size);
+    std::memcpy(g_state.au, kFixtureH264, sizeof(kFixtureH264));
+
+    step("hwdec: sceVideodec2CreateDecoder (AVC)");
+    rc = sceVideodec2CreateDecoder(&avc, &memory, &g_state.decoder);
+    report.add_hex("hwdec", "create_rc", static_cast<std::uint32_t>(rc));
+    if (rc != 0)
+        return;
+    step("hwdec: sceVideodec2Reset");
+    rc = sceVideodec2Reset(g_state.decoder);
+    report.add_hex("hwdec", "reset_rc", static_cast<std::uint32_t>(rc));
+    g_state.created = rc == 0;
+    step("hwdec: decoder %s", g_state.created ? "ready" : "not ready");
+}
+
+void report_output(Report &report, const std::string &prefix, const vd::OutputInfo &out,
+                   const vd::FrameBuffer &frame)
+{
+    report.add("hwdec", prefix + "_valid", static_cast<std::int64_t>(out.valid));
+    report.add("hwdec", prefix + "_error", static_cast<std::int64_t>(out.error));
+    report.add("hwdec", prefix + "_accepted", static_cast<std::int64_t>(frame.accepted));
+    report.add("hwdec", prefix + "_size",
+               std::to_string(out.width) + "x" + std::to_string(out.height) + " pitch " +
+                   std::to_string(out.pitch) + " (" + std::to_string(out.pitch_bytes) +
+                   " bytes) format " + std::to_string(out.frame_format));
+}
+
+void decode(Report &report)
+{
+    if (!g_state.created)
+    {
+        report.note("hwdec", "no decoder was made before the HEN; nothing to decode");
+        return;
+    }
+    vd::InputData input{};
+    input.size = sizeof(input);
+    input.au = g_state.au;
+    input.au_size = g_state.au_size;
+    input.pts = 0;
+    input.dts = ~std::uint64_t{0};
+    vd::FrameBuffer frame{};
+    frame.size = sizeof(frame);
+    frame.buffer = g_state.frame;
+    frame.buffer_size = g_state.frame_size;
+    vd::OutputInfo out{};
+    out.size = sizeof(out);
+
+    step("hwdec: sceVideodec2Decode, one keyframe of %llu bytes, after the HEN",
+         static_cast<unsigned long long>(g_state.au_size));
+    const std::int64_t begin = sys::monotonic_us();
+    int32_t rc = sceVideodec2Decode(g_state.decoder, &input, &frame, &out);
+    report.add("hwdec", "decode_ms", static_cast<double>(sys::monotonic_us() - begin) / 1000.0);
+    report.add_hex("hwdec", "decode_rc", static_cast<std::uint32_t>(rc));
+    report_output(report, "decode", out, frame);
+    if (rc == 0 && out.valid == 0)
+    {
+        step("hwdec: sceVideodec2Flush (the picture is still inside)");
+        out = vd::OutputInfo{};
+        out.size = sizeof(out);
+        rc = sceVideodec2Flush(g_state.decoder, &frame, &out);
+        report.add_hex("hwdec", "flush_rc", static_cast<std::uint32_t>(rc));
+        report_output(report, "flush", out, frame);
+    }
+    if (rc != 0 || out.valid == 0 || out.error != 0 || out.buffer == nullptr ||
+        out.pitch_bytes < static_cast<std::uint32_t>(kFixtureWidth) ||
+        out.height < static_cast<std::uint32_t>(kFixtureHeight))
+    {
+        report.note("hwdec", "no picture came out");
+        return;
+    }
+    step("hwdec: hashing the luma");
+    const auto *luma = static_cast<const std::uint8_t *>(out.buffer);
+    std::uint32_t hash = 0x811C9DC5u;
+    for (int y = 0; y < kFixtureHeight; ++y)
+        for (int x = 0; x < kFixtureWidth; ++x)
+            hash = (hash ^ luma[static_cast<std::size_t>(y) * out.pitch_bytes + x]) * 0x01000193u;
+    report.add_hex("hwdec", "luma_hash", hash);
+    report.add_hex("hwdec", "luma_hash_expected", kFixtureLumaHash);
+    report.add("hwdec", "picture_matches_ffmpeg", hash == kFixtureLumaHash ? "yes" : "no");
+    step("hwdec: picture %s FFmpeg's", hash == kFixtureLumaHash ? "matches" : "differs from");
+}
+
+} // namespace hwdec
 #endif
 
 // ---- an HDR surface --------------------------------------------------------------------------
@@ -804,6 +1036,19 @@ void run_decoder_bind_probe(probe::Report &report, const char *label)
     g_follower = nullptr;
 }
 
+void run_hwdec_bringup(probe::Report &report)
+{
+    LogFollower log(report);
+    g_follower = &log;
+#ifdef HUI_VIDEODEC2
+    hwdec::bring_up(report);
+#else
+    report.note("hwdec", "this build has no libSceVideodec2 import; build with HW_DECODE=1");
+#endif
+    log.flush();
+    g_follower = nullptr;
+}
+
 void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &report)
 {
     LogFollower log(report);
@@ -836,6 +1081,13 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
     if (plan.decoder_load)
     {
         probe_decoder_load(report);
+        log.flush();
+    }
+    if (plan.hwdec)
+    {
+#ifdef HUI_VIDEODEC2
+        hwdec::decode(report);
+#endif
         log.flush();
     }
     if (plan.decoder_bind)

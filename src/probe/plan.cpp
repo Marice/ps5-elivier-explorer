@@ -68,6 +68,11 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
             plan.decoder_bind = true;
             alone_asked = true;
         }
+        else if (token == "hwdec")
+        {
+            plan.hwdec = true;
+            alone_asked = true;
+        }
         else if (token == "decoder-query")
         {
             return fail(error, "decoder-query is not built yet");
@@ -113,6 +118,7 @@ std::string describe(const ProbePlan &plan)
     add(plan.egl, "egl");
     add(plan.decoder_load, "decoder-load");
     add(plan.decoder_bind, "decoder-bind");
+    add(plan.hwdec, "hwdec");
     switch (plan.hdr)
     {
     case HdrMode::pq10:

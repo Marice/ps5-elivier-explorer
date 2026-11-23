@@ -46,6 +46,7 @@
 #include <string>
 #include <vector>
 
+extern "C" std::size_t hui_heap_capacity(int *direct);
 extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
                                std::size_t *blocks, std::size_t *failures);
 
@@ -268,6 +269,12 @@ int main()
     // storage is the fallback (a PC cannot read it once the title has closed).
     static const char *const kTraceFolders[] = {"/data/elivier-explorer", "/download0/hui"};
     explorer::trace_open(kTraceFolders);
+    {
+        int direct = 0;
+        const std::size_t capacity = hui_heap_capacity(&direct);
+        explorer::trace("heap: %zu MiB of %s memory", capacity >> 20,
+                        direct != 0 ? "direct" : "flexible");
+    }
     ps5::catch_crashes(reinterpret_cast<const void *>(&open_display));
     explorer::trace("entry; trace in %s", explorer::trace_path());
     // Out of the sandbox before anything else: the HEN must see one thread, and every file the

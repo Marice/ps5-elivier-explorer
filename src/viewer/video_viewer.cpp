@@ -6,6 +6,9 @@
 #include "audio/mixer.hpp"
 #include "explorer/source.hpp"
 #include "explorer/trace.hpp"
+
+// The console's heap size (src/runtime/app_heap.c); absent on a PC.
+extern "C" std::size_t hui_heap_capacity(int *direct) __attribute__((weak));
 #include "viewer/sound_viewer.hpp"
 
 #include <algorithm>
@@ -109,7 +112,12 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
     const auto reader = [source, path](std::uint64_t offset, void *buffer, std::size_t size)
     { return source->read_range(path, offset, buffer, size); };
     std::string reason;
-    engine_ = hui::video::PlaybackEngine::open(reader, entry.size, hui::video::EngineOptions{},
+    hui::video::EngineOptions options;
+    // With the 1 GiB heap a 1080p film may keep its full queue of pictures; with the old 128 MiB
+    // the engine's default budget keeps it short enough to fit (docs/decision-log.md, D54).
+    if (hui_heap_capacity == nullptr || hui_heap_capacity(nullptr) >= (512u << 20))
+        options.picture_budget_bytes = 160u << 20;
+    engine_ = hui::video::PlaybackEngine::open(reader, entry.size, options,
                                                &reason);
     if (!engine_)
     {

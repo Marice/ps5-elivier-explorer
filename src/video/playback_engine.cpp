@@ -4,6 +4,8 @@
 
 #include "video/playback_engine.hpp"
 
+#include "explorer/trace.hpp"
+
 #include "video/audio_decoder.hpp"
 #include "video/av_sync.hpp"
 #include "video/subtitle_decoder.hpp"
@@ -63,6 +65,10 @@ struct PlaybackEngine::Impl
     double drop_audio_before = -1.0;
     bool demux_ended = false;
     bool video_ended = false;
+    bool first_picture_traced = false; // trace lines for the first picture and sound chunk only
+    bool first_sound_traced = false;
+    bool first_video_sent = false;
+    bool first_sound_sent = false;
     bool audio_ended = false;
     bool sent_end = false;
 
@@ -258,6 +264,9 @@ struct PlaybackEngine::Impl
         // decoded (it has to be) but never converted or shown.
         if (frame.pts != kNoTimestamp && frame.pts < drop_video_before - 1e-3)
             return true;
+        if (!first_picture_traced)
+            hui::explorer::trace("film: first decoded picture %dx%d depth %d", frame.width,
+                                 frame.height, frame.bit_depth);
         std::unique_ptr<VideoPicture> picture = new_picture();
         picture->width = frame.width;
         picture->height = frame.height;
@@ -272,6 +281,11 @@ struct PlaybackEngine::Impl
             video_ended = true;
             return true;
         }
+        if (!first_picture_traced)
+        {
+            hui::explorer::trace("film: first picture converted");
+            first_picture_traced = true;
+        }
         std::lock_guard<std::mutex> lock(mutex);
         if (static_cast<int>(pictures.size()) < options.picture_queue)
             pictures.push_back(std::move(picture));
@@ -285,6 +299,11 @@ struct PlaybackEngine::Impl
         if (!audio || audio_ended)
             return false;
         AudioChunk chunk;
+        if (!first_sound_traced)
+        {
+            hui::explorer::trace("film: decoding the first sound");
+            first_sound_traced = true;
+        }
         const ReceiveResult result = audio->receive(chunk);
         if (result == ReceiveResult::end)
         {
@@ -394,6 +413,13 @@ struct PlaybackEngine::Impl
     {
         if (packets.empty())
             return false;
+        bool &traced = is_video ? first_video_sent : first_sound_sent;
+        if (!traced)
+        {
+            hui::explorer::trace("film: first %s packet to its decoder (%zu bytes)",
+                                 is_video ? "video" : "sound", size_of(packets.front()));
+            traced = true;
+        }
         const SendResult sent =
             is_video ? video->send(packets.front()) : audio->send(packets.front());
         if (sent == SendResult::full)
@@ -478,6 +504,7 @@ struct PlaybackEngine::Impl
 
     void run()
     {
+        hui::explorer::trace("film: reader thread runs");
         while (!stopping.load())
         {
             if (!pump())
@@ -612,18 +639,23 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
         return nullptr;
     }
     impl->info = impl->demuxer->info();
+    // The console is the one place where this has crashed without a word: leave a trail
+    // (docs/decision-log.md, D54), a few lines per film.
+    hui::explorer::trace("film: opened, %zu streams", impl->info.streams.size());
     for (const StreamInfo &stream : impl->info.streams)
     {
         if (stream.kind == StreamKind::video && impl->video_index < 0)
         {
             impl->video = open_software_decoder(*impl->demuxer, stream.index, options.limits,
                                                 &impl->video_error);
+            hui::explorer::trace("film: video decoder %s", impl->video ? "open" : "refused");
             if (impl->video)
                 impl->video_index = stream.index;
         }
         else if (stream.kind == StreamKind::audio && impl->audio_index < 0)
         {
             impl->audio = open_audio_decoder(*impl->demuxer, stream.index, &impl->audio_error);
+            hui::explorer::trace("film: sound decoder %s", impl->audio ? "open" : "refused");
             if (impl->audio)
                 impl->audio_index = stream.index;
         }
@@ -716,6 +748,7 @@ void PlaybackEngine::start()
     if (result != 0)
         result = pthread_create(&impl_->thread, nullptr, &Impl::thread_main, impl_.get());
     impl_->running = result == 0;
+    hui::explorer::trace("film: reader thread %s", impl_->running ? "started" : "NOT started");
 }
 
 void PlaybackEngine::stop()

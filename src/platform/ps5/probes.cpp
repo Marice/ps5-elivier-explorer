@@ -5,6 +5,7 @@
 #include "platform/ps5/probes.hpp"
 
 #include "explorer/trace.hpp"
+#include "platform/ps5/surround_out.hpp"
 #include "platform/ps5/system.hpp"
 #include "platform/ps5/videodec2.hpp"
 #include "video/colour.hpp"
@@ -15,6 +16,8 @@
 #include <EGL/eglext.h>
 #include <GL/glcorearb.h>
 
+#include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -926,6 +929,62 @@ void decode(Report &report)
 } // namespace hwdec
 #endif
 
+// ---- speakers: which speaker each of the eight channels reaches --------------------------------
+
+// The order the decoder writes (video/audio_decoder.hpp, D65), to be confirmed by ear: a tone
+// of 1.5 s on one channel at a time, then 0.5 s of silence, and the trace names the channel
+// while it sounds. The LFE gets a low tone, as a subwoofer plays nothing high.
+void probe_speakers(Report &report)
+{
+    static const char *const kNames[audio::kSurroundChannels] = {
+        "front left", "front right", "centre", "LFE (subwoofer)",
+        "side / surround left", "side / surround right", "back left", "back right"};
+    SurroundOut out;
+    step("speakers: opening the eight-channel port");
+    if (!out.open())
+    {
+        report.note("speakers", "the eight-channel port was refused");
+        return;
+    }
+    constexpr int kSegment = 2 * 48000;
+    constexpr int kTone = 3 * 48000 / 2;
+    std::atomic<int> frame{0};
+    std::atomic<int> announced{-1};
+    out.start([&](float *grain, int frames) {
+        for (int i = 0; i < frames; ++i)
+        {
+            const int at = frame.fetch_add(1);
+            const int channel = at / kSegment;
+            const int in_segment = at % kSegment;
+            if (channel < audio::kSurroundChannels && in_segment == 0)
+                announced.store(channel);
+            const bool sounding = channel < audio::kSurroundChannels && in_segment < kTone;
+            const float pitch = channel == 3 ? 60.0f : 440.0f;
+            const float value =
+                sounding ? 0.3f * std::sin(6.2831853f * pitch * static_cast<float>(in_segment) / 48000.0f)
+                         : 0.0f;
+            for (int c = 0; c < audio::kSurroundChannels; ++c)
+                grain[i * audio::kSurroundChannels + c] = c == channel ? value : 0.0f;
+        }
+        return frames;
+    });
+    int told = -1;
+    const std::int64_t end = sys::monotonic_us() + std::int64_t{kSegment} * audio::kSurroundChannels / 48 * 1000 + 500000;
+    while (sys::monotonic_us() < end)
+    {
+        const int now = announced.load();
+        if (now != told && now >= 0)
+        {
+            told = now;
+            step("speakers: channel %d now: %s", now, kNames[now]);
+            report.add("speakers", "channel_" + std::to_string(now), kNames[now]);
+        }
+        sys::sleep_us(20000);
+    }
+    out.close();
+    step("speakers: done");
+}
+
 // ---- an HDR surface --------------------------------------------------------------------------
 
 struct HdrAttempt
@@ -1081,6 +1140,11 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
     if (plan.decoder_load)
     {
         probe_decoder_load(report);
+        log.flush();
+    }
+    if (plan.speakers)
+    {
+        probe_speakers(report);
         log.flush();
     }
     if (plan.hwdec)

@@ -75,6 +75,18 @@ TEST(ProbePlan, HwdecRunsAloneBecauseItCallsTheDecoderBeforeTheHen)
     EXPECT_FALSE(parse_probe_plan("hwdec+memory", plan, &error));
 }
 
+TEST(ProbePlan, SpeakersPlaysATonePerChannelAndIsAskedForByName)
+{
+    ProbePlan plan;
+    std::string error;
+    ASSERT_TRUE(parse_probe_plan("speakers", plan, &error)) << error;
+    EXPECT_TRUE(plan.speakers);
+    EXPECT_EQ(describe(plan), "speakers");
+    plan = ProbePlan{};
+    ASSERT_TRUE(parse_probe_plan("safe", plan, &error));
+    EXPECT_FALSE(plan.speakers);
+}
+
 TEST(ProbePlan, AnHdrAttemptRunsAloneBecauseItEndsTheLaunch)
 {
     ProbePlan plan;

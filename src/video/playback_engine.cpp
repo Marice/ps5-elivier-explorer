@@ -1026,6 +1026,27 @@ int PlaybackEngine::sound_channels() const
     return impl_->options.sound_channels;
 }
 
+bool PlaybackEngine::set_sound_channels(int channels)
+{
+    if (impl_->running || impl_->source_taken || impl_->audio_index < 0)
+        return false;
+    if (channels == impl_->options.sound_channels)
+        return true;
+    std::string reason;
+    auto decoder = open_audio_decoder(*impl_->demuxer, impl_->audio_index, &reason, channels);
+    if (!decoder)
+        return false;
+    // Nothing has been decoded yet when this is called before start(); a pump() before it may
+    // have queued stereo chunks, which are dropped with the old decoder.
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->audio = std::move(decoder);
+    impl_->options.sound_channels = channels;
+    impl_->sound.clear();
+    impl_->sound_front_offset = 0;
+    impl_->sound_seconds = 0.0;
+    return true;
+}
+
 std::unique_ptr<audio::Decoder> PlaybackEngine::make_audio_source()
 {
     {

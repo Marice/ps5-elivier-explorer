@@ -29,6 +29,7 @@
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
 #include "platform/ps5/hw_video.hpp"
+#include "platform/ps5/surround_out.hpp"
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/probes.hpp"
 #include "platform/ps5/system.hpp"
@@ -364,6 +365,7 @@ int main()
         music.init(mixer, assets + "/audio/music", static_cast<std::uint64_t>(sys::monotonic_us()));
     sys::log("[HUI] music songs=%d", tracks);
     ps5::AudioOut audio_out;
+    ps5::SurroundOut surround_out; // opened by a film with surround sound, closed after it
     audio_out.start(mixer);
     audio::SoundBank sounds;
     const auto bank = sounds.load(assets + "/audio/sfx");
@@ -374,7 +376,7 @@ int main()
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
     hui::gfx::GlTextureHost texture_host;
-    hui::concepts::set_explorer_services(&texture_host, &mixer);
+    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");

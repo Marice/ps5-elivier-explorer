@@ -101,7 +101,8 @@ class VideoViewer final : public Viewer
     std::string name_;
     TextureHost *textures_ = nullptr;
     std::unique_ptr<hui::video::PlaybackEngine> engine_;
-    std::unique_ptr<hui::audio::AudioPlayer> player_;
+    std::unique_ptr<hui::audio::SoundPlayer> player_; // the mixer's (stereo) or a surround one
+    bool surround_ = false;
     std::uint32_t texture_ = 0;
     int texture_width_ = 0;
     int texture_height_ = 0;

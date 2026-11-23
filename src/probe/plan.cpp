@@ -68,6 +68,10 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
             plan.decoder_bind = true;
             alone_asked = true;
         }
+        else if (token == "speakers")
+        {
+            plan.speakers = true;
+        }
         else if (token == "hwdec")
         {
             plan.hwdec = true;
@@ -119,6 +123,7 @@ std::string describe(const ProbePlan &plan)
     add(plan.decoder_load, "decoder-load");
     add(plan.decoder_bind, "decoder-bind");
     add(plan.hwdec, "hwdec");
+    add(plan.speakers, "speakers");
     switch (plan.hdr)
     {
     case HdrMode::pq10:

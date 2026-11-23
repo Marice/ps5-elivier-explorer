@@ -117,6 +117,10 @@ class PlaybackEngine
     // Fewer at the end; audio::Decoder::kTryLater when nothing is ready yet.
     int read_sound(float *out, int frames);
     int sound_channels() const;
+    // Switches the sound to `channels` (2 or kSurroundChannels) by opening its decoder again.
+    // Only before start() and before make_audio_source(); false otherwise, or when the decoder
+    // cannot (the sound then stays as it was).
+    bool set_sound_channels(int channels);
 
     // Everything is decoded and shown or heard.
     bool ended() const;

@@ -201,6 +201,22 @@ TEST(PlaybackEngine, SurroundSoundComesOutOnEightChannels)
     EXPECT_LT(back, 0.001f);
 }
 
+TEST(PlaybackEngine, TheSoundCanBeSwitchedToEightChannelsBeforeItStarts)
+{
+    const auto bytes = read_all("ac3-surround.mkv");
+    std::string error;
+    auto engine = open_engine(bytes, &error);
+    ASSERT_TRUE(engine) << error;
+    ASSERT_TRUE(engine->set_sound_channels(8));
+    EXPECT_EQ(engine->sound_channels(), 8);
+    run_to_idle(*engine);
+    std::vector<float> sound(256 * 8);
+    EXPECT_EQ(engine->read_sound(sound.data(), 256), 256);
+    engine->start();
+    EXPECT_FALSE(engine->set_sound_channels(2)); // not while the engine runs
+    engine->stop();
+}
+
 TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
 {
     const auto bytes = read_all("h264-aac.mp4");

@@ -25,6 +25,7 @@ class JobWorker;
 namespace hui::audio
 {
 class Mixer;
+class SurroundSink;
 }
 
 namespace hui::viewer
@@ -59,6 +60,8 @@ struct ViewerContext
     hui::explorer::JobWorker *worker = nullptr;
     TextureHost *textures = nullptr;
     hui::audio::Mixer *mixer = nullptr;
+    // An eight-channel output for films with more than two channels (D65); null: stereo.
+    hui::audio::SurroundSink *surround = nullptr;
 };
 
 // The file to open: where it is and what the listing knew of it.

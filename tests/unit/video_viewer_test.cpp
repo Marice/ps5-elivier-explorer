@@ -6,6 +6,7 @@
 #include "fake_textures.hpp"
 
 #include "audio/mixer.hpp"
+#include "audio/surround.hpp"
 #include "explorer/local_source.hpp"
 #include "explorer/trace.hpp"
 #include "viewer/registry.hpp"
@@ -13,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -35,6 +38,54 @@ using namespace hui::viewer;
 const std::string kDir = std::string(HUI_SOURCE_DIR) + "/tests/fixtures/video";
 const hui::gfx::Rect kArea{96.0f, 270.0f, 1500.0f, 520.0f};
 
+// An eight-channel output that pulls from a thread of its own, as the console's does.
+class ThreadedSink final : public hui::audio::SurroundSink
+{
+  public:
+    ~ThreadedSink() override
+    {
+        close();
+    }
+    bool open() override
+    {
+        ++opened;
+        return accept;
+    }
+    bool start(Pull pull) override
+    {
+        running_ = true;
+        thread_ = std::thread([this, pull] {
+            std::vector<float> grain(256 * hui::audio::kSurroundChannels);
+            while (running_)
+            {
+                if (pull(grain.data(), 256) > 0)
+                    for (std::size_t i = 4; i < grain.size(); i += hui::audio::kSurroundChannels)
+                        loudest_surround = std::max(loudest_surround.load(), std::fabs(grain[i]));
+                pulls += 1;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        });
+        return true;
+    }
+    void close() override
+    {
+        running_ = false;
+        if (thread_.joinable())
+            thread_.join();
+        ++closed;
+    }
+
+    bool accept = true;
+    int opened = 0;
+    int closed = 0;
+    std::atomic<int> pulls{0};
+    std::atomic<float> loudest_surround{0.0f};
+
+  private:
+    std::atomic<bool> running_{false};
+    std::thread thread_;
+};
+
 class VideoViewerTest : public ConceptFixture
 {
   protected:
@@ -46,6 +97,7 @@ class VideoViewerTest : public ConceptFixture
         context.fonts = &fonts_;
         context.textures = textures;
         context.mixer = with_mixer ? &mixer_ : nullptr;
+        context.surround = surround_;
         FileRef file;
         file.source = &source_;
         file.path = path;
@@ -95,6 +147,7 @@ class VideoViewerTest : public ConceptFixture
 
     hui::explorer::LocalSource source_;
     hui::audio::Mixer mixer_;
+    hui::audio::SurroundSink *surround_ = nullptr;
 };
 
 TEST_F(VideoViewerTest, WritesOneLineASecondToTheTraceWhilePlaying)
@@ -146,6 +199,39 @@ TEST_F(VideoViewerTest, TriangleSwitchesToFullScreenAndBack)
     EXPECT_FALSE(viewer->fullscreen());
     tick(*viewer, press(hui::Action::north));
     EXPECT_GT(drawn(*viewer), window_shapes);
+}
+
+TEST_F(VideoViewerTest, SurroundSoundGoesToTheEightChannelOutput)
+{
+    ThreadedSink sink;
+    surround_ = &sink;
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/ac3-surround.mkv", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    EXPECT_EQ(sink.opened, 1);
+    // The output takes the sound, the surrounds are in it, and its count is the clock.
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 0.3; }, /*audio=*/false));
+    EXPECT_GT(sink.loudest_surround.load(), 0.05f);
+    viewer->close();
+    EXPECT_GE(sink.closed, 1);
+}
+
+TEST_F(VideoViewerTest, AStereoFilmOrARefusedOutputStaysOnTheMixer)
+{
+    ThreadedSink sink;
+    surround_ = &sink;
+    FakeTextures textures;
+    const auto stereo = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(stereo->error().empty());
+    EXPECT_EQ(sink.opened, 0); // one channel: no reason to ask
+    ASSERT_TRUE(run_until(*stereo, [&] { return stereo->position() > 0.1; }));
+
+    sink.accept = false;
+    const auto refused = open(kDir + "/ac3-surround.mkv", &textures);
+    ASSERT_TRUE(refused->error().empty());
+    EXPECT_EQ(sink.opened, 1);
+    EXPECT_EQ(sink.pulls.load(), 0);
+    ASSERT_TRUE(run_until(*refused, [&] { return refused->position() > 0.1; })); // the mixer's clock
 }
 
 TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)

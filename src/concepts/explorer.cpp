@@ -203,6 +203,7 @@ constexpr float kPanesBottom = 962.0f;
 const hui::viewer::HandlerRegistry *g_registry = nullptr;
 hui::viewer::TextureHost *g_textures = nullptr;
 hui::audio::Mixer *g_mixer = nullptr;
+hui::audio::SurroundSink *g_surround = nullptr;
 
 const hui::viewer::HandlerRegistry &registry()
 {
@@ -1043,6 +1044,7 @@ class ExplorerScreen final : public app::Concept
         context.worker = &worker_;
         context.textures = g_textures;
         context.mixer = g_mixer;
+        context.surround = g_surround;
         hui::viewer::FileRef file;
         file.source = &source_;
         file.path = path;
@@ -1301,10 +1303,12 @@ class ExplorerScreen final : public app::Concept
 
 } // namespace
 
-void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer)
+void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer,
+                           hui::audio::SurroundSink *surround)
 {
     g_textures = textures;
     g_mixer = mixer;
+    g_surround = surround;
 }
 
 void set_explorer_registry(const hui::viewer::HandlerRegistry *registry)

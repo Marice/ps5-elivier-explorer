@@ -10,6 +10,7 @@ src/audio/mixer.cpp
 src/audio/mp3_decoder.cpp
 src/audio/player.cpp
 src/audio/resampler.cpp
+src/audio/surround.cpp
 src/audio/music.cpp
 src/audio/wav.cpp
 src/concepts/*.cpp

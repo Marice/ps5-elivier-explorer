@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "audio/surround.hpp"
 #include "video/av_sync.hpp"
 #include "video/decoder_result.hpp"
 #include "video/demuxer.hpp"
@@ -26,7 +27,7 @@ inline constexpr int kAudioOutputRate = 48000;
 // The console's eight-channel order, as VLC and MPC for PS5 feed it (D65; to be confirmed on a
 // receiver with the speakers probe): front left, front right, centre, LFE, the side pair (where
 // a 5.1 film's surrounds go), the back pair.
-constexpr int kSurroundChannels = 8;
+constexpr int kSurroundChannels = audio::kSurroundChannels;
 
 struct AudioChunk
 {

@@ -4,6 +4,8 @@
 #include "viewer/video_viewer.hpp"
 
 #include "audio/mixer.hpp"
+#include "audio/player.hpp"
+#include "audio/surround.hpp"
 #include "explorer/source.hpp"
 #include "explorer/trace.hpp"
 
@@ -157,11 +159,48 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
 
     // The sound, when there is somewhere to play it. Without it the engine must not keep
     // decoding sound nobody reads: its queue would fill and hold the picture back.
-    if (engine_->has_audio() && context.mixer != nullptr)
+    // More than two channels and an eight-channel output: the film's sound goes there, as it is
+    // (D65); the console mixes it down itself for a stereo TV.
+    int channels = 0;
+    for (const hui::video::StreamInfo &stream : engine_->info().streams)
+        if (stream.index == engine_->audio_stream())
+            channels = stream.channels;
+    if (engine_->has_audio() && channels > 2 && context.surround != nullptr &&
+        context.surround->open())
     {
-        player_ = std::make_unique<hui::audio::AudioPlayer>(*context.mixer);
+        if (engine_->set_sound_channels(hui::audio::kSurroundChannels))
+        {
+            hui::video::PlaybackEngine *engine = engine_.get();
+            auto surround = std::make_unique<hui::audio::SurroundPlayer>(
+                *context.surround,
+                [engine](float *out, int frames) { return engine->read_sound(out, frames); },
+                [engine](double seconds) { engine->seek(seconds); });
+            if (surround->start())
+            {
+                player_ = std::move(surround);
+                surround_ = true;
+            }
+        }
+        if (!surround_)
+        {
+            context.surround->close();
+            engine_->set_sound_channels(2);
+        }
+        hui::explorer::trace("film: %d channels, %s", channels,
+                             surround_ ? "on the eight-channel output" : "mixed down to stereo");
+    }
+    if (surround_)
+    {
+        for (std::size_t i = 0; i < sound_streams_.size(); ++i)
+            if (sound_streams_[i] == engine_->audio_stream())
+                sound_choice_ = static_cast<int>(i);
+    }
+    else if (engine_->has_audio() && context.mixer != nullptr)
+    {
+        auto stereo = std::make_unique<hui::audio::AudioPlayer>(*context.mixer);
         if (auto source_of_sound = engine_->make_audio_source())
-            player_->start(std::move(source_of_sound));
+            stereo->start(std::move(source_of_sound));
+        player_ = std::move(stereo);
         for (std::size_t i = 0; i < sound_streams_.size(); ++i)
             if (sound_streams_[i] == engine_->audio_stream())
                 sound_choice_ = static_cast<int>(i);
@@ -615,7 +654,8 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     for (const hui::video::StreamInfo &stream : engine_->info().streams)
         if (stream.index == sound)
             info += std::string(info.empty() ? "" : "     ") + "Sound: " +
-                    describe_track(stream, sound_choice_ + 1);
+                    describe_track(stream, sound_choice_ + 1) +
+                    (surround_ ? ", surround out" : "");
     if (subtitle_sources_.size() > 1)
     {
         const SubtitleSource &chosen =

@@ -28,6 +28,7 @@
 #include "platform/ps5/crash.hpp"
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
+#include "platform/ps5/hw_video.hpp"
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/probes.hpp"
 #include "platform/ps5/system.hpp"
@@ -287,6 +288,10 @@ int main()
         explorer::trace("probe launch: hwdec, bringing a decoder up before the HEN frees the app");
         ps5::run_hwdec_bringup(early_report);
     }
+    // The hardware decoders answer only before the HEN frees the app, and keep working after it
+    // (docs/decision-log.md, D60): they are made now, once, for the whole run.
+    if (!(probe_asked && (probe_name == "hwdec" || probe_name == "decoder-bind")))
+        ps5::hw_video_bring_up();
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
     explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);

@@ -605,6 +605,8 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
                    std::to_string(stream.height);
             if (stream.bit_depth > 8)
                 info += " " + std::to_string(stream.bit_depth) + "-bit";
+            if (engine_->video_decoder_name().rfind("hardware", 0) == 0)
+                info += " (hardware)";
             if (stream.colour.transfer == hui::video::Transfer::pq)
                 info += " HDR (shown as SDR)";
         }

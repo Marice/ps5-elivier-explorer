@@ -3,6 +3,26 @@
 All notable changes to EliVier Explorer are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the app's content version.
 
+## [Unreleased]
+
+### Added
+
+- A video viewer (`.mp4 .mkv .webm .avi .mov` and more): H.264, H.265, VP9, AV1 and older codecs decoded in
+  software up to 1920 x 1088, with sound (stereo output; surround is mixed down) and subtitles (the file's own
+  text tracks, and `.srt`, `.vtt`, `.ass` or `.ssa` files beside the film). Cross plays and pauses, the D-pad seeks
+  and changes the volume, L1 and R1 choose the sound track, Square the subtitles. Tested on a PC only: not yet
+  tried on a console, and its speed there is not known.
+- `make video` builds FFmpeg, dav1d and zlib from pinned, checked sources (about ten minutes, once). The app
+  grows by about 11 MB.
+- Console tools: `tools/console-install.py` and `tools/console-trace.py` put a build on a console over FTP and read
+  the app's trace; `tools/console-probe.py` and a probe mode in the app measure memory, texture uploads, EGL
+  surfaces and the video decoder library before video features are built on them (`docs/CONSOLE_VALIDATION.md`).
+
+### Changed
+
+- The sound player accepts a source that has no sound yet (`audio::Decoder::kTryLater`): it waits instead of
+  ending the song.
+
 ## [v00.001.000] - 2026-11-22
 
 ### Added

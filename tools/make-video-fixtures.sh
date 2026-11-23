@@ -15,7 +15,7 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-out="$root/tests/fixtures/video"
+out=${VIDEO_FIXTURE_DIR:-$root/tests/fixtures/video}
 command -v ffmpeg >/dev/null || { echo "ffmpeg is required" >&2; exit 2; }
 mkdir -p "$out"
 
@@ -84,5 +84,9 @@ ffmpeg "${quiet[@]}" -f lavfi -i "$video" -f lavfi -i "$(tone 440)" -f lavfi -i 
     -metadata:s:a:1 language=nld -metadata:s:a:1 title="Nederlands" \
     -metadata:s:s:0 language=eng -metadata:s:s:1 language=nld \
     "$out/multi-track.mkv"
+
+# AC-3 5.1, audio only: the same tone on all six channels, so a careless downmix would clip.
+ffmpeg "${quiet[@]}" -f lavfi -i "$(tone 440)" \
+    -af "pan=5.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0" -c:a ac3 -b:a 96k "$out/ac3-surround.mkv"
 
 ls -l "$out"

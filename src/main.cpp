@@ -29,7 +29,10 @@
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
 #include "platform/ps5/pad.hpp"
+#include "platform/ps5/probes.hpp"
 #include "platform/ps5/system.hpp"
+#include "probe/plan.hpp"
+#include "probe/report.hpp"
 #include "ui/fonts.hpp"
 
 #include <cstring>
@@ -69,6 +72,8 @@ constexpr const char *kRequestFile = "/dev/request.txt";
 // How long a finished tour stays up so the PC can copy its evidence (the
 // storage is unmounted when the title closes) before the app closes itself.
 constexpr double kCollectSeconds = 240.0;
+// The same for a probe run, which has one short text file to collect, not hundreds of pictures.
+constexpr double kProbeCollectSeconds = 120.0;
 // Quarter of a quarter: the title's storage is small and a tour takes
 // hundreds of pictures. Enough to compare layout and colour with the PC's.
 constexpr int kCaptureWidth = 480;
@@ -158,6 +163,87 @@ bool save_picture(const std::string &path, int width, int height)
     return std::fclose(file) == 0 && ok;
 }
 
+// A request line "verb argument token" for `wanted_verb` that no earlier launch honoured. The token
+// is remembered at once, so a request that crashes the app is not honoured again by the next start.
+bool take_request(const char *wanted_verb, std::string *argument)
+{
+    std::string request;
+    if (!hui::save::read_file(g_app_folder + kRequestFile, &request, 256))
+        return false;
+    char verb[16] = {};
+    char word[64] = {};
+    char token[64] = {};
+    if (std::sscanf(request.c_str(), "%15s %63s %63s", verb, word, token) != 3 ||
+        std::strcmp(verb, wanted_verb) != 0)
+        return false;
+    const std::string handled_path = std::string(kDevRoot) + "/handled.txt";
+    std::string handled;
+    hui::save::read_file(handled_path, &handled, 128);
+    if (handled == token)
+        return false;
+    hui::save::ensure_directory(kDevRoot);
+    hui::save::write_atomic(handled_path, token);
+    *argument = word;
+    return true;
+}
+
+// A probe launch: no shell, no music, no controller. The probes of the request run, the answers
+// go to dev/probe/report.txt (and the log, line by line as they come), and the app stays up for
+// a while so that the PC can copy them (the storage goes away when the title closes) before it
+// closes itself. A "quit" request ends the wait early.
+void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::string &name)
+{
+    using namespace hui;
+    probe::ProbePlan plan;
+    probe::Report report;
+    std::string error;
+    save::ensure_directory(std::string(kDevRoot) + "/probe");
+    sys::log("[HUI] probe run requested: %s", name.c_str());
+    report.add("run", "request", name);
+    if (probe::parse_probe_plan(name, plan, &error))
+    {
+        ps5::run_probes(plan, display, report);
+    }
+    else
+    {
+        report.note("run", "refused: " + error);
+        sys::log("[HUI] probe refused: %s", error.c_str());
+    }
+    save::write_atomic(std::string(kDevRoot) + "/probe/report.txt", report.text());
+    sys::log("[HUI] probe run finished lines=%zu", report.lines().size());
+
+    // An HDR attempt leaves the display closed; a plain one is enough for the wait.
+    if (display.width() == 0 && !open_display(display, resolution))
+        sys::log("[HUI] probe: no display for the wait; waiting without one");
+    double waited = 0.0;
+    std::int64_t last = sys::monotonic_us();
+    for (std::uint64_t frame = 0;; ++frame)
+    {
+        if (display.width() > 0)
+        {
+            glClearColor(0.04f, 0.04f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (!display.swap())
+                sys::sleep_us(16000);
+        }
+        else
+        {
+            sys::sleep_us(16000);
+        }
+        const std::int64_t now = sys::monotonic_us();
+        waited += static_cast<double>(now - last) / 1e6;
+        last = now;
+        std::string ignored;
+        if (frame % 60 == 0 && (take_request("quit", &ignored) || waited > kProbeCollectSeconds))
+        {
+            sys::log("[HUI] closing: probe %s", waited > kProbeCollectSeconds
+                                                    ? "evidence window over"
+                                                    : "quit requested");
+            sys::quit();
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -198,6 +284,13 @@ int main()
         sys::park();
     }
     explorer::trace("display open %dx%d", display.width(), display.height());
+
+    // A probe request turns this launch into a measurement run (docs/CONSOLE_VALIDATION.md).
+    {
+        std::string probe_name;
+        if (take_request("probe", &probe_name))
+            run_probe_launch(display, &resolution, probe_name);
+    }
 
     gfx::Renderer renderer;
     gfx::Font regular;

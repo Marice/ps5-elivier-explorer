@@ -47,6 +47,9 @@ AudioPlayer::~AudioPlayer()
 
 void AudioPlayer::attach(StreamRing *ring)
 {
+    // A song or film the player opened is as loud as its own volume says, not scaled again by
+    // the background music setting (docs/decision-log.md, D57).
+    mixer_.set_stream_follows_music(kStreamSlot, false);
     mixer_.swap_stream(kStreamSlot, ring);
 }
 
@@ -107,6 +110,8 @@ void AudioPlayer::pump(float dt)
             if (++decodes > kMaxDecodesPerPump)
                 break;
             const int got = decoder_->read(chunk_.data(), kChunk);
+            if (got == Decoder::kTryLater)
+                break; // nothing yet, not the end: nothing is written, so the clock waits
             if (got <= 0)
             {
                 ended_ = true;

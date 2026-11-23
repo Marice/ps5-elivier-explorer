@@ -20,6 +20,7 @@ enum class Kind : std::uint16_t
     stats = 3,
     game = 4,
     prefs = 5,
+    media = 6, // the video viewer's memory: resume positions, languages
 };
 
 // Layout (little-endian): "HUIL" | u16 version | u16 kind | u32 size |

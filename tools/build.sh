@@ -221,6 +221,13 @@ wrap_options=()
 if grep -qs '__wrap_sceSystemServiceHideSplashScreen' "$root/src/runtime/runtime_shims.c"; then
     wrap_options+=("--wrap=sceSystemServiceHideSplashScreen")
 fi
+# The runtime's video output calls, watched for HDR output (src/platform/ps5/video_out_hook.cpp).
+if grep -qs '__wrap_sceVideoOutOpen' "$root/src/platform/ps5/video_out_hook.cpp"; then
+    for symbol in sceVideoOutOpen sceVideoOutClose sceVideoOutRegisterBuffers2 \
+        sceVideoOutSetBufferAttribute2; do
+        wrap_options+=("--wrap=$symbol")
+    done
+fi
 if [[ -f $root/src/runtime/app_heap.c ]]; then
     for symbol in malloc calloc realloc free posix_memalign malloc_usable_size; do
         wrap_options+=("--wrap=$symbol")

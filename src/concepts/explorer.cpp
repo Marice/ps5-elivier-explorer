@@ -148,6 +148,43 @@ constexpr app::TourStep kTour[] = {
     {0.9f, 0, Direction::none, "files-about"},
     {0.2f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
+    // The video viewer comes last, so that every picture above keeps its rows: to the left pane
+    // (the demo's /data), down to its last file (the list ends there and refuses softly), play it,
+    // then switch the subtitles on.
+    {0.3f, 0, Direction::left, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {2.5f, 0, Direction::none, "files-video"},
+    {0.3f, action_bit(Action::west), Direction::none, nullptr},
+    {1.0f, 0, Direction::none, "files-video-subtitles"},
+    {0.3f, action_bit(Action::north), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-fullscreen"},
+    {0.3f, action_bit(Action::north), Direction::none, nullptr},
+    {0.3f, action_bit(Action::back), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, nullptr},
 };
 
 constexpr float kHeaderHeight = 100.0f; // a pane's path and facts, above its table
@@ -166,6 +203,9 @@ constexpr float kPanesBottom = 962.0f;
 const hui::viewer::HandlerRegistry *g_registry = nullptr;
 hui::viewer::TextureHost *g_textures = nullptr;
 hui::audio::Mixer *g_mixer = nullptr;
+hui::audio::SurroundSink *g_surround = nullptr;
+hui::viewer::HdrOutput *g_hdr = nullptr;
+hui::viewer::MediaMemory *g_memory = nullptr;
 
 const hui::viewer::HandlerRegistry &registry()
 {
@@ -727,6 +767,14 @@ class ExplorerScreen final : public app::Concept
         frame.scene.push_opacity(tween::cubic_out(age_ / 0.3f));
         ui::Canvas canvas{frame.scene, context_.fonts, frame.glass_texture, clock_};
         ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
+        if (viewer_ && viewer_->fullscreen())
+        {
+            viewer_->draw(paint, canvas,
+                          {0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
+            toasts_.draw(top);
+            frame.scene.pop_opacity();
+            return;
+        }
         if (viewer_)
         {
             // The open file has the whole screen: its name on top, then its own view and hints.
@@ -998,6 +1046,9 @@ class ExplorerScreen final : public app::Concept
         context.worker = &worker_;
         context.textures = g_textures;
         context.mixer = g_mixer;
+        context.surround = g_surround;
+        context.hdr = g_hdr;
+        context.memory = g_memory;
         hui::viewer::FileRef file;
         file.source = &source_;
         file.path = path;
@@ -1256,10 +1307,15 @@ class ExplorerScreen final : public app::Concept
 
 } // namespace
 
-void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer)
+void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer,
+                           hui::audio::SurroundSink *surround, hui::viewer::HdrOutput *hdr,
+                           hui::viewer::MediaMemory *memory)
 {
+    g_memory = memory;
     g_textures = textures;
     g_mixer = mixer;
+    g_surround = surround;
+    g_hdr = hdr;
 }
 
 void set_explorer_registry(const hui::viewer::HandlerRegistry *registry)

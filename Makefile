@@ -17,11 +17,27 @@ PS5_OPENGL_PREFIX ?=
 
 # The app always builds against ps5-opengl; user APP_* values append.
 OPENGL_SDK := .deps/ps5-opengl/current
+# FFmpeg, dav1d and zlib for the PS5, built by tools/setup-video-dependencies.sh (make video).
+VIDEO_PREFIX := .deps/video/root/usr
+VIDEO_ARCHIVES := $(addprefix $(VIDEO_PREFIX)/lib/,libavformat.a libavcodec.a libswresample.a \
+	libavutil.a libdav1d.a libz.a)
 override APP_DEFINITIONS := $(strip GL_GLEXT_PROTOTYPES=1 $(APP_DEFINITIONS))
-override APP_INCLUDE_PATHS := $(strip src $(OPENGL_SDK)/include $(APP_INCLUDE_PATHS))
-override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(APP_STATIC_ARCHIVES))
+override APP_INCLUDE_PATHS := $(strip src $(OPENGL_SDK)/include $(VIDEO_PREFIX)/include \
+	$(APP_INCLUDE_PATHS))
+override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(VIDEO_ARCHIVES) \
+	$(APP_STATIC_ARCHIVES))
 override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 	$(OPENGL_SDK)/lib/libSceAgcDriver.so $(APP_IMPORT_STUBS))
+# HW_DECODE=1 links an import stub of libSceVideodec2, so that the loader loads the system
+# library when the app starts (the only way a fake-signed module gets it; D47), and the app
+# decodes H.264 and HEVC in hardware (D60 to D62). On by default (D63). If a firmware does not
+# export a name of the stub, the whole app is refused at start: build with HW_DECODE=0 then.
+HW_DECODE ?= 1
+ifeq ($(HW_DECODE),1)
+VIDEODEC2_STUB := .deps/video/stubs/libSceVideodec2.so
+override APP_DEFINITIONS := $(strip $(APP_DEFINITIONS) HUI_VIDEODEC2=1)
+override APP_IMPORT_STUBS := $(strip $(APP_IMPORT_STUBS) $(VIDEODEC2_STUB))
+endif
 PACBREW_PACKAGES ?=
 PACBREW_INCLUDE_PATHS ?=
 PACBREW_STATIC_ARCHIVES ?=
@@ -55,7 +71,7 @@ RUNTIME_INPUTS := tools/rebuild-libc.sh tools/build-host-tools.sh tools/ninja-bu
 	$(wildcard tooling/native/runtime/*.txt)
 HOST_UNIT_TEST := build/tests/unit_tests
 
-.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
+.PHONY: all app build init doctor test test-deps test-unit test-integration libc deps opengl video videodec2-stub host-snapshots fonts pacbrew pacbrew-list assets-check format format-check tidy lint check deploy undeploy clean distclean help
 
 all: app
 build: app
@@ -95,6 +111,14 @@ opengl:
 	@printf '%s\n' '==> [opengl] Preparing the ps5-opengl SDK link group'
 	@bash tools/prepare-opengl.sh
 
+videodec2-stub:
+	@printf '%s\n' '==> [video] Building the libSceVideodec2 import stub (HW_DECODE=1)'
+	@bash tools/make-videodec2-stub.sh >/dev/null
+
+video:
+	@printf '%s\n' '==> [video] Building FFmpeg, dav1d and zlib for the PS5 (once, about ten minutes)'
+	@bash tools/setup-video-dependencies.sh >/dev/null
+
 pacbrew:
 	@printf '%s\n' '==> [pacbrew] Fetching the pinned prebuilt ports sysroot'
 	@bash tools/setup-pacbrew-dependencies.sh --all
@@ -119,7 +143,7 @@ $(RUNTIME): $(RUNTIME_INPUTS)
 	@printf '%s\n' '==> [libc] Generating the missing or outdated runtime'
 	@bash tools/rebuild-libc.sh
 
-app: $(RUNTIME) opengl
+app: $(RUNTIME) opengl video $(if $(filter 1,$(HW_DECODE)),videodec2-stub)
 	@printf '%s\n' '==> [app] Compiling, linking, signing, and assembling the app folder'
 	@bash tools/build.sh Folder
 

@@ -25,6 +25,7 @@ class JobWorker;
 namespace hui::audio
 {
 class Mixer;
+class SurroundSink;
 }
 
 namespace hui::viewer
@@ -38,6 +39,28 @@ class TextureHost
     // 8-bit RGBA, rows top to bottom; 0 when it could not be made.
     virtual std::uint32_t create(int width, int height, const std::uint8_t *rgba) = 0;
     virtual void destroy(std::uint32_t texture) = 0;
+    // A texture for a moving picture, 16 bits a channel (the console uploads those about 15 times
+    // faster than 8-bit ones, D52), made empty; fill it with update(). 0 when it could not be made.
+    virtual std::uint32_t create_streaming(int width, int height) = 0;
+    // New pixels (RGBA, 16 bits a channel, rows top to bottom) for a texture made by
+    // create_streaming(), of the same width and height. False when the texture or the size is
+    // not right.
+    virtual bool update(std::uint32_t texture, int width, int height,
+                        const std::uint16_t *rgba) = 0;
+};
+
+class MediaMemory;
+
+// The display's HDR10 mode (the console's; D71). Only one viewer uses it at a time.
+class HdrOutput
+{
+  public:
+    virtual ~HdrOutput() = default;
+    // Switches the display to HDR10; false when it cannot (the film then stays tone-mapped).
+    virtual bool enter() = 0;
+    // Back to SDR. Safe when not in HDR.
+    virtual void leave() = 0;
+    virtual bool active() const = 0;
 };
 
 // What a viewer may use. Anything may be null (a test, or a build without it): a viewer that
@@ -51,6 +74,12 @@ struct ViewerContext
     hui::explorer::JobWorker *worker = nullptr;
     TextureHost *textures = nullptr;
     hui::audio::Mixer *mixer = nullptr;
+    // An eight-channel output for films with more than two channels (D65); null: stereo.
+    hui::audio::SurroundSink *surround = nullptr;
+    // HDR10 output for HDR films in full screen (D68); null: HDR films are tone-mapped to SDR.
+    HdrOutput *hdr = nullptr;
+    // Where films were left and the languages last picked (D73); null: nothing is remembered.
+    MediaMemory *memory = nullptr;
 };
 
 // The file to open: where it is and what the listing knew of it.
@@ -71,6 +100,12 @@ class Viewer
     // Must not change state: it may be drawn more than once a frame.
     virtual void draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &area) const = 0;
     virtual std::span<const ui::Hint> hints() const = 0;
+    // True while the viewer wants the whole screen: the screen then draws no title and no hint
+    // row, and passes the full 1920 x 1080 canvas to draw(); the viewer shows its own hints.
+    virtual bool fullscreen() const
+    {
+        return false;
+    }
     // True once the player asked to leave (Circle); the screen then calls close() and drops it.
     virtual bool closing() const = 0;
     // Gives back what the viewer holds that is not freed by its destructor alone: a playing

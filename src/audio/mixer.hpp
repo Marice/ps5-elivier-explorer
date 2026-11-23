@@ -86,6 +86,9 @@ class Mixer
     bool swap_stream(std::size_t slot, StreamRing *ring);
     // Ramps a stream's gain to gain over seconds (0 = at once).
     bool set_stream_gain(std::size_t slot, float gain, float seconds);
+    // Whether a stream is scaled by the music bus (the music volume setting). True by default;
+    // a viewer's player turns it off, since it has a volume of its own (D57).
+    bool set_stream_follows_music(std::size_t slot, bool follows);
 
     // ---- audio thread ----
     // Renders frames of interleaved stereo S16 at kSampleRate.
@@ -120,6 +123,7 @@ class Mixer
         stop_all,
         stream_gain,
         stream_swap,
+        stream_follows_music,
     };
     struct Command
     {
@@ -167,6 +171,7 @@ class Mixer
     std::array<float, kStreams> stream_gain_{};
     std::array<float, kStreams> stream_target_{};
     std::array<float, kStreams> stream_step_{};
+    std::array<bool, kStreams> stream_follows_music_{true, true};
     std::array<std::array<float, kMaxGrain * 2>, kStreams> stream_buffer_{};
     std::atomic<std::uint64_t> underruns_{0};
 };

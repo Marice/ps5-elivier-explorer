@@ -83,6 +83,11 @@ bool Display::supports_display_modes()
 
 bool Display::open(int width, int height)
 {
+    return open(width, height, SurfaceRequest{});
+}
+
+bool Display::open(int width, int height, const SurfaceRequest &request)
+{
     EGLint major = 0;
     EGLint minor = 0;
     EGLint count = 0;
@@ -118,15 +123,57 @@ bool Display::open(int width, int height)
         close();
         return false;
     }
-    if (!eglChooseConfig(display_, kConfigAttributes, &config, 1, &count) || count != 1)
+    // The default request is exactly the attribute list the app has always used.
+    EGLint custom_attributes[32] = {};
+    const EGLint *config_attributes = kConfigAttributes;
+    if (!request.is_default())
+    {
+        int at = 0;
+        const auto put = [&](EGLint name, EGLint value) {
+            custom_attributes[at++] = name;
+            custom_attributes[at++] = value;
+        };
+        put(EGL_SURFACE_TYPE, EGL_WINDOW_BIT);
+        put(EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT);
+        put(EGL_RED_SIZE, request.red);
+        put(EGL_GREEN_SIZE, request.green);
+        put(EGL_BLUE_SIZE, request.blue);
+        put(EGL_ALPHA_SIZE, request.alpha);
+        if (request.float_pixels)
+            put(EGL_COLOR_COMPONENT_TYPE_EXT, EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT);
+        custom_attributes[at] = EGL_NONE;
+        config_attributes = custom_attributes;
+    }
+    if (!eglChooseConfig(display_, config_attributes, &config, 1, &count) || count != 1)
     {
         fail("eglChooseConfig");
         close();
         return false;
     }
-    // The PS5 backend owns the window: native handle 0 and NULL attributes.
-    surface_ =
-        eglCreateWindowSurface(display_, config, static_cast<EGLNativeWindowType>(0), nullptr);
+    {
+        EGLint r = 0;
+        EGLint g = 0;
+        EGLint b = 0;
+        EGLint a = 0;
+        EGLint component_type = 0;
+        eglGetConfigAttrib(display_, config, EGL_RED_SIZE, &r);
+        eglGetConfigAttrib(display_, config, EGL_GREEN_SIZE, &g);
+        eglGetConfigAttrib(display_, config, EGL_BLUE_SIZE, &b);
+        eglGetConfigAttrib(display_, config, EGL_ALPHA_SIZE, &a);
+        // Only asked when a float surface was: on a driver without the extension the query sets
+        // an EGL error, which a later fail() would report as if it were its own.
+        if (request.float_pixels)
+            eglGetConfigAttrib(display_, config, EGL_COLOR_COMPONENT_TYPE_EXT, &component_type);
+        const bool is_float = component_type == EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT;
+        config_info_ = "rgba=" + std::to_string(r) + "/" + std::to_string(g) + "/" +
+                       std::to_string(b) + "/" + std::to_string(a) +
+                       " float=" + (is_float ? "1" : "0");
+    }
+    // The PS5 backend owns the window: native handle 0. The default has NULL attributes; a probe
+    // may ask for a colour space.
+    const EGLint surface_attributes[] = {EGL_GL_COLORSPACE_KHR, request.colour_space, EGL_NONE};
+    surface_ = eglCreateWindowSurface(display_, config, static_cast<EGLNativeWindowType>(0),
+                                      request.colour_space != 0 ? surface_attributes : nullptr);
     if (surface_ == EGL_NO_SURFACE)
     {
         fail("eglCreateWindowSurface");
@@ -153,6 +200,9 @@ bool Display::open(int width, int height)
         close();
         return false;
     }
+    surface_colour_space_ = 0;
+    if (request.colour_space != 0)
+        eglQuerySurface(display_, surface_, EGL_GL_COLORSPACE_KHR, &surface_colour_space_);
     // Vsync: the swap paces the frame loop. ps5-opengl accepts only 0 or 1.
     if (!eglSwapInterval(display_, 1))
     {

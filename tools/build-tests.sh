@@ -12,6 +12,19 @@ source "$root/tools/ninja-build.sh"
 gtest=$(bash "$root/tools/setup-test-dependencies.sh")
 cxx=$(command -v "${HOST_CXX:-clang++}")
 cc=$(command -v "${HOST_CC:-clang}")
+# The video code reads files through FFmpeg: the host copy of the pinned libraries (built once).
+video_include=""
+video_archives=()
+while IFS='=' read -r key value; do
+    case $key in
+        VIDEO_INCLUDE) video_include=$value ;;
+        VIDEO_ARCHIVES) read -r -a video_archives <<< "$value" ;;
+    esac
+done < <(bash "$root/tools/setup-video-dependencies.sh" --host)
+[[ -n $video_include && ${#video_archives[@]} -gt 0 ]] || {
+    echo "the host video libraries are missing" >&2
+    exit 2
+}
 build="$root/build/tests"
 ninja_begin "$build/build.ninja"
 read -r -a flags <<< "${HOST_TEST_CXXFLAGS:--std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -ffunction-sections -fdata-sections}"
@@ -54,11 +67,12 @@ for source in "${sources[@]}"; do
     else
         ninja_edge CXX "$object" "${compiler_cache[@]}" "$cxx" "${flags[@]}" -pthread \
             "${sanitizers[@]}" "-DHUI_SOURCE_DIR=\"$root\"" -I"$root/src" -I"$root/tests" \
-            -isystem "$gtest/googletest/include" -MD -MF "$object.d" -c "$source" -o "$object"
+            -isystem "$gtest/googletest/include" -isystem "$video_include" \
+            -MD -MF "$object.d" -c "$source" -o "$object"
     fi
     objects+=("$object")
 done
-ninja_inputs=("${objects[@]}" "$cxx")
+ninja_inputs=("${objects[@]}" "${video_archives[@]}" "$cxx")
 ninja_edge LINK "$build/unit_tests" "$cxx" "${flags[@]}" -pthread "${sanitizers[@]}" \
-    "${objects[@]}" "${ldflags[@]}" -lm -o "$build/unit_tests"
+    "${objects[@]}" "${ldflags[@]}" "${video_archives[@]}" -lm -ldl -o "$build/unit_tests"
 ninja_run

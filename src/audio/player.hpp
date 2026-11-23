@@ -11,37 +11,38 @@
 #include "audio/decoder.hpp"
 #include "audio/mixer.hpp"
 #include "audio/resampler.hpp"
+#include "audio/sound_player.hpp"
 
 #include <memory>
 
 namespace hui::audio
 {
 
-class AudioPlayer
+class AudioPlayer final : public SoundPlayer
 {
   public:
     explicit AudioPlayer(Mixer &mixer);
-    ~AudioPlayer();
+    ~AudioPlayer() override;
     AudioPlayer(const AudioPlayer &) = delete;
     AudioPlayer &operator=(const AudioPlayer &) = delete;
 
     // Plays a song from its start (what played before stops).
     void start(std::unique_ptr<Decoder> decoder);
     // Silences the stream and lets go of the song. Safe to call again.
-    void stop();
-    void pump(float dt);
+    void stop() override;
+    void pump(float dt) override;
 
-    void set_paused(bool paused);
+    void set_paused(bool paused) override;
     bool paused() const
     {
         return paused_;
     }
     // Moves by `seconds` (negative goes back), inside the song.
     void seek_by(double seconds);
-    void seek_to(double seconds);
+    void seek_to(double seconds) override;
     // 0..10, a perceptual curve like the settings.
-    void set_volume(int steps);
-    int volume() const
+    void set_volume(int steps) override;
+    int volume() const override
     {
         return volume_;
     }
@@ -51,8 +52,8 @@ class AudioPlayer
         return decoder_ != nullptr;
     }
     // The song has played to its end.
-    bool finished() const;
-    double position() const;
+    bool finished() const override;
+    double position() const override;
     double duration() const
     {
         return decoder_ ? decoder_->duration() : 0.0;

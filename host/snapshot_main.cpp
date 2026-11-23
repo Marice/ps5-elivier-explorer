@@ -230,6 +230,17 @@ int main(int argc, char **argv)
         hui::save::write_atomic(stick + "/" + name, bytes);
     }
     {
+        // The demo film (host/demo, made by tools/make-video-demo.sh). It sorts last in /data, so
+        // the rows the tour walks over in the stick's list stay where they were.
+        std::string film;
+        if (!hui::save::read_file(assets + "/../host/demo/zz-demo-clip.mkv", &film, 64u << 20))
+        {
+            std::fprintf(stderr, "missing demo file host/demo/zz-demo-clip.mkv\n");
+            return 1;
+        }
+        hui::save::write_atomic(browse + "/zz-demo-clip.mkv", film);
+    }
+    {
         std::string blob = "EliVier\0\1\2\3 demo file: header, then bytes.\n";
         blob.resize(4096);
         for (std::size_t i = 64; i < blob.size(); ++i)

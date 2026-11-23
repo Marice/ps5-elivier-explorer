@@ -23,13 +23,22 @@
 #include "gfx/canvas.hpp"
 #include "gfx/gl_texture_host.hpp"
 #include "gfx/image.hpp"
+#include "gfx/hdr_presenter.hpp"
 #include "gfx/renderer.hpp"
 #include "platform/ps5/audio_out.hpp"
 #include "platform/ps5/crash.hpp"
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
+#include "platform/ps5/hdr_output.hpp"
+#include "viewer/media_memory.hpp"
+#include "platform/ps5/hw_video.hpp"
+#include "platform/ps5/surround_out.hpp"
+#include "platform/ps5/video_out_hook.hpp"
 #include "platform/ps5/pad.hpp"
+#include "platform/ps5/probes.hpp"
 #include "platform/ps5/system.hpp"
+#include "probe/plan.hpp"
+#include "probe/report.hpp"
 #include "ui/fonts.hpp"
 
 #include <cstring>
@@ -69,6 +78,8 @@ constexpr const char *kRequestFile = "/dev/request.txt";
 // How long a finished tour stays up so the PC can copy its evidence (the
 // storage is unmounted when the title closes) before the app closes itself.
 constexpr double kCollectSeconds = 240.0;
+// The same for a probe run, which has one short text file to collect, not hundreds of pictures.
+constexpr double kProbeCollectSeconds = 120.0;
 // Quarter of a quarter: the title's storage is small and a tour takes
 // hundreds of pictures. Enough to compare layout and colour with the PC's.
 constexpr int kCaptureWidth = 480;
@@ -158,6 +169,101 @@ bool save_picture(const std::string &path, int width, int height)
     return std::fclose(file) == 0 && ok;
 }
 
+// A request line "verb argument token" for `wanted_verb` that no earlier launch honoured. The token
+// is remembered at once, so a request that crashes the app is not honoured again by the next start.
+bool take_request(const char *wanted_verb, std::string *argument)
+{
+    std::string request;
+    if (!hui::save::read_file(g_app_folder + kRequestFile, &request, 256))
+        return false;
+    char verb[16] = {};
+    char word[64] = {};
+    char token[64] = {};
+    if (std::sscanf(request.c_str(), "%15s %63s %63s", verb, word, token) != 3 ||
+        std::strcmp(verb, wanted_verb) != 0)
+        return false;
+    const std::string handled_path = std::string(kDevRoot) + "/handled.txt";
+    std::string handled;
+    hui::save::read_file(handled_path, &handled, 128);
+    if (handled == token)
+        return false;
+    hui::save::ensure_directory(kDevRoot);
+    hui::save::write_atomic(handled_path, token);
+    *argument = word;
+    return true;
+}
+
+// A probe launch: no shell, no music, no controller. The probes of the request run, the answers
+// go to dev/probe/report.txt (and the log, line by line as they come), and the app stays up for
+// a while so that the PC can copy them (the storage goes away when the title closes) before it
+// closes itself. A "quit" request ends the wait early.
+void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::string &name,
+                      const hui::probe::Report &early)
+{
+    using namespace hui;
+    probe::ProbePlan plan;
+    probe::Report report;
+    std::string error;
+    save::ensure_directory(std::string(kDevRoot) + "/probe");
+    sys::log("[HUI] probe run requested: %s", name.c_str());
+    explorer::trace("probe launch: request '%s'", name.c_str());
+    report.add("run", "request", name);
+    if (probe::parse_probe_plan(name, plan, &error))
+    {
+        // decoder-bind ran at the start of main(), before the HEN; it is not called again here.
+        if (!early.lines().empty())
+            plan.decoder_bind = false;
+        ps5::run_probes(plan, display, report);
+    }
+    else
+    {
+        report.note("run", "refused: " + error);
+        sys::log("[HUI] probe refused: %s", error.c_str());
+    }
+    report.insert_front(early);
+    save::write_atomic(std::string(kDevRoot) + "/probe/report.txt", report.text());
+    // A copy beside the trace, where a PC can still read it after the app has closed.
+    const std::string trace_file = explorer::trace_path();
+    const std::size_t slash = trace_file.rfind('/');
+    if (slash != std::string::npos)
+        save::write_atomic(trace_file.substr(0, slash) + "/probe-report.txt", report.text());
+    sys::log("[HUI] probe run finished lines=%zu", report.lines().size());
+    explorer::trace("probe run finished: %zu lines; waiting %.0f s to be collected",
+                    report.lines().size(), kProbeCollectSeconds);
+
+    // An HDR attempt leaves the display closed; a plain one is enough for the wait.
+    if (display.width() == 0 && !open_display(display, resolution))
+        sys::log("[HUI] probe: no display for the wait; waiting without one");
+    double waited = 0.0;
+    std::int64_t last = sys::monotonic_us();
+    for (std::uint64_t frame = 0;; ++frame)
+    {
+        if (display.width() > 0)
+        {
+            glClearColor(0.04f, 0.04f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (!display.swap())
+                sys::sleep_us(16000);
+        }
+        else
+        {
+            sys::sleep_us(16000);
+        }
+        const std::int64_t now = sys::monotonic_us();
+        waited += static_cast<double>(now - last) / 1e6;
+        last = now;
+        std::string ignored;
+        if (frame % 60 == 0 && (take_request("quit", &ignored) || waited > kProbeCollectSeconds))
+        {
+            sys::log("[HUI] closing: probe %s", waited > kProbeCollectSeconds
+                                                    ? "evidence window over"
+                                                    : "quit requested");
+            explorer::trace("probe launch: closing");
+            sys::quit();
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -172,6 +278,25 @@ int main()
     explorer::trace("entry; trace in %s", explorer::trace_path());
     // Out of the sandbox before anything else: the HEN must see one thread, and every file the
     // app reads afterwards may live elsewhere.
+    // A probe request is read before anything else: decoder-bind runs now, before the HEN frees
+    // the app, because that is when EVO Player brings its decoders up (docs/decision-log.md, D48).
+    std::string probe_name;
+    probe::Report early_report;
+    const bool probe_asked = take_request("probe", &probe_name);
+    if (probe_asked && probe_name == "decoder-bind")
+    {
+        explorer::trace("probe launch: decoder-bind, before the HEN frees the app");
+        ps5::run_decoder_bind_probe(early_report, "early");
+    }
+    if (probe_asked && probe_name == "hwdec")
+    {
+        explorer::trace("probe launch: hwdec, bringing a decoder up before the HEN frees the app");
+        ps5::run_hwdec_bringup(early_report);
+    }
+    // The hardware decoders answer only before the HEN frees the app, and keep working after it
+    // (docs/decision-log.md, D60): they are made now, once, for the whole run.
+    if (!(probe_asked && (probe_name == "hwdec" || probe_name == "decoder-bind")))
+        ps5::hw_video_bring_up();
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
     explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);
@@ -198,6 +323,11 @@ int main()
         sys::park();
     }
     explorer::trace("display open %dx%d", display.width(), display.height());
+    ps5::trace_video_out_status("after the display opened");
+
+    // A probe request turns this launch into a measurement run (docs/CONSOLE_VALIDATION.md).
+    if (probe_asked)
+        run_probe_launch(display, &resolution, probe_name, early_report);
 
     gfx::Renderer renderer;
     gfx::Font regular;
@@ -240,6 +370,10 @@ int main()
         music.init(mixer, assets + "/audio/music", static_cast<std::uint64_t>(sys::monotonic_us()));
     sys::log("[HUI] music songs=%d", tracks);
     ps5::AudioOut audio_out;
+    ps5::SurroundOut surround_out; // opened by a film with surround sound, closed after it
+    // HDR10 for an HDR film in full screen (D68, D71): the frame is then packed for the scanout.
+    gfx::HdrPresenter hdr_presenter;
+    ps5::HdrOut hdr_out(hdr_presenter, display.width(), display.height());
     audio_out.start(mixer);
     audio::SoundBank sounds;
     const auto bank = sounds.load(assets + "/audio/sfx");
@@ -250,7 +384,11 @@ int main()
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
     hui::gfx::GlTextureHost texture_host;
-    hui::concepts::set_explorer_services(&texture_host, &mixer);
+    // Where films were left and the languages last picked, beside the settings (D73).
+    viewer::MediaMemory media_memory(std::string(kDataRoot) + "/media.bin");
+    media_memory.load();
+    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out, &hdr_out,
+                                         &media_memory);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");
@@ -358,10 +496,15 @@ int main()
         shell.compose(renderer);
         if (frames == 0)
             explorer::trace("frame 1: composed");
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // In HDR10 mode the frame goes into the presenter's target and is packed from there.
+        const GLuint target =
+            hdr_out.active() ? hdr_presenter.begin(display.width(), display.height()) : 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, target);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        renderer.present(0, display.width(), display.height());
+        renderer.present(target, display.width(), display.height());
+        if (target != 0)
+            hdr_presenter.finish(display.width(), display.height());
         if (frames == 0)
             explorer::trace("frame 1: presented");
         if (tour && !tour->capture().empty())

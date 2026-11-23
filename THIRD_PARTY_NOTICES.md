@@ -70,6 +70,26 @@ MP3 files are decoded by [minimp3](https://github.com/lieff/minimp3) (CC0 1.0;
 see `src/third_party/minimp3/LICENSE`), vendored at the commit in
 `src/third_party/minimp3/UPSTREAM`.
 
+## Video decoding
+
+Video, sound and subtitle files are read and decoded by [FFmpeg](https://ffmpeg.org/) 7.1.5 (libavformat,
+libavcodec, libswresample and libavutil; LGPL-2.1-or-later, as configured here: no `--enable-gpl`, no
+encoders, no network, no filters; the list of decoders, demuxers, parsers and bitstream filters is in
+`tools/setup-video-dependencies.sh`). AV1 is decoded by [dav1d](https://code.videolan.org/videolan/dav1d) 1.5.5
+(BSD-2-Clause), and some containers use [zlib](https://zlib.net/) 1.3.2 (zlib licence). All three are built from
+the sources named, with their hashes, in that script, into `.deps/video/` (not vendored in this repository) and
+linked statically into the PS5 application. FFmpeg is linked as a library; its licence text is available from
+https://ffmpeg.org/legal.html and with its sources. The decoder interface and the playback engine in `src/video/`
+are this project's own. The console's hardware decoder (`libSceVideodec2`) has no public documentation: the
+structure layouts, constants and call order in `src/platform/ps5/videodec2.hpp` follow what two homebrew players
+describe and use, [EVO Player](https://github.com/sainsaji/EVO-PLAYER-PS5) (GPL-3.0-or-later; its ABI notes credit
+ProsperoLight) and [VLC for PS5](https://github.com/ZiZc3/VLC) (GPL-3.0; its decoder module is also used by
+[MediaPlayerClassicPS5](https://github.com/MisterTemaki/MediaPlayerClassicPS5)), together with the
+[hardware decoding research](https://github.com/manoma080/ps5-hardware-video-decoding-research) notes
+(GPL-3.0-or-later). The code was written for this project from those descriptions; the layouts themselves are
+interface facts, checked on a console (docs/decision-log.md, D60). The test clips in `tests/fixtures/video` and the demo film in `host/demo` are generated
+from FFmpeg's own test sources and invented text.
+
 ## Image decoding
 
 Pictures (and the About screen's QR code) are decoded by [stb_image](https://github.com/nothings/stb)

@@ -318,6 +318,95 @@ TEST(AudioPlayer, PlaysASongThroughTheMixerAndCountsTheTime)
     EXPECT_FALSE(player.finished());
 }
 
+// A source that has nothing for a while and then something: what a film's sound is when the
+// thread that decodes it is a little behind.
+class LateDecoder final : public Decoder
+{
+  public:
+    explicit LateDecoder(int empty_reads) : empty_reads_(empty_reads)
+    {
+    }
+    int rate() const override
+    {
+        return 48000;
+    }
+    double duration() const override
+    {
+        return 10.0;
+    }
+    int read(float *stereo, int frames) override
+    {
+        ++reads;
+        if (empty_reads_ > 0)
+        {
+            --empty_reads_;
+            return kTryLater;
+        }
+        if (remaining_ <= 0)
+            return 0;
+        const int count = std::min(frames, remaining_);
+        for (int i = 0; i < count * 2; ++i)
+            stereo[i] = 0.25f;
+        remaining_ -= count;
+        return count;
+    }
+    bool seek(double) override
+    {
+        return true;
+    }
+    const std::string &title() const override
+    {
+        return empty_;
+    }
+    const std::string &artist() const override
+    {
+        return empty_;
+    }
+    const std::string &description() const override
+    {
+        return empty_;
+    }
+    const CoverArt &cover() const override
+    {
+        return cover_;
+    }
+    int reads = 0;
+
+  private:
+    int empty_reads_;
+    int remaining_ = 48000;
+    std::string empty_;
+    CoverArt cover_;
+};
+
+TEST(AudioPlayer, ASourceThatIsNotReadyYetDoesNotEndTheSongOrMoveTheClock)
+{
+    Mixer mixer;
+    AudioPlayer player(mixer);
+    auto decoder = std::make_unique<LateDecoder>(200);
+    LateDecoder *late = decoder.get();
+    player.start(std::move(decoder));
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        player.pump(1.0f / 60.0f);
+        render(mixer, 800); // the audio thread runs; the ring is empty
+    }
+    EXPECT_GT(late->reads, 1);           // it kept asking
+    EXPECT_FALSE(player.finished());     // "not yet" is not the end
+    EXPECT_DOUBLE_EQ(player.position(), 0.0); // and the clock stood still: no silence was written
+
+    // Now sound arrives: the clock starts from the first sample, not from a stretch of silence.
+    for (int frame = 0; frame < 400; ++frame)
+    {
+        player.pump(1.0f / 60.0f);
+        render(mixer, 800);
+        if (player.finished())
+            break;
+    }
+    EXPECT_TRUE(player.finished());
+    EXPECT_NEAR(player.position(), 1.0, 0.05); // one second of sound, played from 0
+}
+
 TEST(AudioPlayer, FinishesAtTheEndOfTheSong)
 {
     const Song song(kMono);

@@ -7,6 +7,7 @@
 #include "viewer/image_viewer.hpp"
 #include "viewer/sound_viewer.hpp"
 #include "viewer/text_viewer.hpp"
+#include "viewer/video_viewer.hpp"
 
 namespace hui::viewer
 {
@@ -19,6 +20,7 @@ const HandlerRegistry &default_registry()
         // Image, hex and sound handlers are added here as they are written.
         built.add(std::make_unique<ImageHandler>());
         built.add(std::make_unique<SoundHandler>());
+        built.add(std::make_unique<VideoHandler>());
         built.add(std::make_unique<TextHandler>());
         built.add(std::make_unique<HexHandler>());
         return built;

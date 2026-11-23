@@ -3,8 +3,8 @@
 # EliVier Explorer
 
 A file explorer for the PS5 (`LAPY69432`), made for the controller and the television. Two panes, copy, move and
-delete that are hard to get wrong, and built-in viewers: text, pictures (also DDS), a hex view and an MP3 player
-with playlists.
+delete that are hard to get wrong, and built-in viewers: text, pictures (also DDS), a hex view, an MP3 player
+with playlists and a video player.
 
 I made it because the file explorers I tried were not pleasant to use, or were buggy (one wiped a whole USB
 drive). This one aims at comfort and at **opening files**, and it will grow: loading payloads, more file types and
@@ -13,7 +13,9 @@ ShadowMount integration are on the list.
 **Status:** first version, tested on one PS5. The Files screen, the copy, move and delete jobs (including a
 cancelled 23 GB move), and the text, image, hex and MP3 viewers have been used on a console. Not yet tried on a
 console: a name conflict while copying, deleting a big folder, a file over 4 GB onto an exFAT or FAT32 drive, and
-DDS pictures over 16 megapixels. The screenshots below show made-up demo files.
+DDS pictures over 16 megapixels. The **video player is new**: its decoding, sound, subtitles and controls are tested
+on a PC (unit tests and pictures of the screen), but it has **not been tried on a console**, and how fast it plays
+there is not known. The screenshots below show made-up demo files.
 
 ![The two panes](docs/media/explorer/files.png)
 
@@ -53,6 +55,7 @@ Press **Cross** on a file. **Options** → *Open as...* opens any file with any 
 | **Text** | `.txt .log .ini .json .xml .md .csv` and more, and any file that looks like text | Line numbers, accents, tabs and box drawing; scroll by line, page or column. The first 8 MB is read, so a big log opens at once. |
 | **Image** | `.jpg .png .bmp .gif .tga .dds` | Fit, fill and 1:1 (**Cross**), zoom (**L2** / **R2**), pan (stick). DDS: BC1 to BC5, BC7 and plain 8-bit pixels. Pictures over 16 megapixels are shown scaled down. |
 | **Hex** | every file | Offset, bytes and text, with a cursor, a scroll bar and *go to offset* (**Square**). Only the page in view is read, so a 23 GB file opens at once. View only: nothing is written. |
+| **Video** | `.mp4 .m4v .mkv .webm .avi .mov .ts .m2ts .wmv .flv .mpg .ogv .3gp`, and any file that looks like one | Plays H.264, H.265, VP9, AV1 and older codecs with their sound and subtitles, up to 3840 x 2176 (4K). H.264 up to 1080p and H.265 (Main and Main 10) up to 4K are decoded by the console's hardware decoder; everything else, and anything the hardware refuses, in software. **Cross** play and pause, D-pad seek (left and right) and volume (up and down), **L1** / **R1** the sound track, **Triangle** full screen, **Square** the subtitles: off, the file's own text tracks, and any `.srt`, `.vtt`, `.ass` or `.ssa` beside the film with the same name. Surround films (5.1, 7.1) play on the console's eight-channel output, so a receiver gets every channel; on a stereo TV the console mixes them down. Limits for now: picture subtitles (PGS, VobSub) and the styling of ASS are not shown; HDR is shown as an ordinary picture; 4K in software (VP9, AV1) keeps the console's CPU busy. |
 | **Sound** | `.mp3`, `.m3u`, `.m3u8` | Title, artist, album picture, time, seek (D-pad left and right), volume (up and down). A playlist plays in order (**L1** / **R1** for the previous and next song) and skips songs that cannot play. The music stops when you close the viewer. It plays on the music volume of the settings. |
 
 <p>
@@ -82,6 +85,10 @@ docker/run.sh make lint                       # format, static analysis, metadat
 docker/run.sh tools/host-snapshots.sh build/snapshots explorer   # pictures of the screens
 ```
 
+The first build also builds FFmpeg, dav1d and zlib (`make video`, about ten minutes, kept in `.deps/`). The test
+clips (`tools/make-video-fixtures.sh`) and the demo film (`tools/make-video-demo.sh`) are made of generated test
+patterns and tones; ffmpeg with x264, x265, VP9, AV1 and Opus encoders is only needed to make them again.
+
 The pictures use pretend files (`host/snapshot_main.cpp`, `host/demo`). The guides of the UI kit are in
 [docs/KIT_README.md](docs/KIT_README.md).
 
@@ -91,6 +98,8 @@ The pictures use pretend files (`host/snapshot_main.cpp`, `host/demo`). The guid
   EliVier Explorer started from [PayLoader](https://github.com/Marice/ps5-payloader).
 - [stb](https://github.com/nothings/stb) (JPEG, PNG, BMP, GIF, TGA, Ogg), [minimp3](https://github.com/lieff/minimp3)
   (MP3) and [bc7decomp](https://github.com/richgel999/bc7enc_rdo) (BC7) by their authors.
+- [FFmpeg](https://ffmpeg.org/) (reading and decoding video, sound and subtitle files), [dav1d](https://code.videolan.org/videolan/dav1d)
+  (AV1) and [zlib](https://zlib.net/), built from pinned sources by `tools/setup-video-dependencies.sh`.
 
 EliVier Explorer is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

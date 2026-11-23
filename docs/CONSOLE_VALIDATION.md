@@ -80,6 +80,26 @@ What to look at afterwards, in `results/run-1/`:
 | `klog.txt` | The title's start and its clean exit; no crash report |
 | `shadowmount.txt` | The title's lines from the console's lifecycle log: registered, started, released |
 
+## The plain loop: build, FTP, start by hand, read the log
+
+For anything that does not need the unattended tour, three commands are enough and nothing
+waits or retries (the console here has an FTP server on port 1337, the address is the owner's):
+
+```bash
+make                                                       # the app folder in dist/<TITLE_ID>
+tools/console-install.py <console address> 1337 [probe]    # puts it on the console over FTP
+#   start the app from the home screen, wait for it to close
+tools/console-trace.py <console address> 1337 build/console-results/run-1
+```
+
+`console-install.py` sends what differs (by size; files under 1 MiB always), checks the size of
+every file that arrives, and with a probe name writes `dev/request.txt`. `console-trace.py` prints
+the last run of `/data/elivier-explorer/trace.txt`, which the app writes line by line and which is
+still there after the app has closed or crashed, and saves it with `probe-report.txt`.
+`console-tour.py` and `console-probe.py` do the same with more machinery (registration, kernel
+log, waiting for the app) and read hashes back, which stalls the FTP server of this console on
+signed files (docs/decision-log.md, D45).
+
 ## Probes: questions put to the console before a feature is built
 
 A probe is a small measurement that answers one open question of the video work
@@ -100,6 +120,7 @@ PS5_HOST=<console address> tools/console-probe.py results/probe-1 safe
 | `upload` | What it costs, in ms, to upload a 1080p and a 4K frame (8-bit NV12 and 10-bit) to textures, directly and through a buffer | Creates and deletes textures |
 | `egl` | Which EGL extensions and window-surface formats the driver offers (10-bit, float, HDR colour spaces) | Nothing |
 | `decoder-load` | Whether `libSceVideodec2` can be loaded from this title and its nine functions looked up. No decoder function is called | Loads a system module |
+| `decoder-bind` | Calls `sceVideodec2QueryComputeMemoryInfo`, the one read-only function of the library, in a build made with `make HW_DECODE=1` (an import stub of libSceVideodec2 is linked, so that the loader loads the system library at start; D47). Runs alone | If the firmware does not export a name of the stub, the app is refused at start; put the normal build back |
 | `safe` | `memory+upload+egl+decoder-load` | As above |
 | `hdr:pq10`, `hdr:hlg10`, `hdr:fp16` | Does the driver accept a 10-bit or half-float surface in an HDR colour space? Eight brightness steps are shown for 12 s | Closes the display and opens another surface. Runs alone |
 

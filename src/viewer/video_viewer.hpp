@@ -76,6 +76,10 @@ class VideoViewer final : public Viewer
     }
     // "Off" first, then the file's own tracks, then the files beside it.
     std::vector<std::string> subtitle_choices() const;
+    int sound_choice() const
+    {
+        return sound_choice_;
+    }
     int subtitle_choice() const
     {
         return subtitle_choice_;
@@ -91,6 +95,7 @@ class VideoViewer final : public Viewer
         std::string label;
         int stream = -1;    // an embedded track, or -1
         int external = -1;  // an index into external_, or -1
+        std::string language; // "eng", "nl"; empty when unknown
     };
 
     void find_subtitles(hui::explorer::Source *source, const std::string &path);
@@ -103,6 +108,8 @@ class VideoViewer final : public Viewer
     std::vector<hui::video::SubtitleLine> subtitle_lines(double at) const;
     gfx::Color ink(gfx::Color colour) const; // a colour drawn over the film, as the display reads it
     void sync_hdr();
+    void remember_position();
+    void show_note(std::string text);
 
     std::string name_;
     TextureHost *textures_ = nullptr;
@@ -132,6 +139,11 @@ class VideoViewer final : public Viewer
     bool closing_ = false;
     bool fullscreen_ = false;
     HdrOutput *hdr_ = nullptr; // the display's HDR10 mode, when there is one
+    MediaMemory *memory_ = nullptr; // resume positions and languages, when there is one
+    std::string path_;
+    float memory_timer_ = 0.0f; // seconds since the position was last written
+    std::string note_;          // a short line over the film ("Resumed at 1:23:45")
+    float note_timer_ = 0.0f;
     bool hdr_film_ = false;    // the picture is PQ (HDR10)
     bool hdr_on_ = false;      // the display is in HDR10 for this film now
     float overlay_ = 4.0f; // seconds the control bar stays up after the last input

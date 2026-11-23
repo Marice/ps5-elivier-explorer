@@ -9,6 +9,7 @@
 #include "explorer/source.hpp"
 #include "explorer/trace.hpp"
 #include "video/colour.hpp"
+#include "viewer/media_memory.hpp"
 
 // The console's heap size (src/runtime/app_heap.c); absent on a PC.
 extern "C" std::size_t hui_heap_capacity(int *direct) __attribute__((weak));
@@ -107,7 +108,7 @@ std::vector<std::string> split_lines(const std::string &text)
 
 VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::string path,
                          const hui::explorer::Entry &entry, const ViewerContext &context)
-    : name_(std::move(name)), textures_(context.textures)
+    : name_(std::move(name)), textures_(context.textures), memory_(context.memory), path_(path)
 {
     if (source == nullptr)
     {
@@ -145,7 +146,7 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
         return;
     }
 
-    subtitle_sources_.push_back({"Off", -1, -1});
+    subtitle_sources_.push_back({"Off", -1, -1, std::string()});
     for (const hui::video::StreamInfo &stream : engine_->info().streams)
     {
         if (stream.kind == hui::video::StreamKind::audio)
@@ -154,9 +155,31 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
                  !is_picture_subtitle(stream.codec))
             subtitle_sources_.push_back(
                 {describe_track(stream, static_cast<int>(subtitle_sources_.size())), stream.index,
-                 -1});
+                 -1, stream.language});
     }
     find_subtitles(source, path);
+
+    // The languages last picked, when this film has them (D73).
+    int chosen_audio = engine_->audio_stream();
+    if (memory_ != nullptr && !memory_->audio_language().empty())
+        for (const hui::video::StreamInfo &stream : engine_->info().streams)
+            if (stream.kind == hui::video::StreamKind::audio &&
+                same_language(stream.language, memory_->audio_language()))
+            {
+                if (stream.index != chosen_audio)
+                    engine_->select_audio(stream.index, 0.0);
+                chosen_audio = stream.index;
+                break;
+            }
+    if (memory_ != nullptr && memory_->subtitle_choice() == MediaMemory::Subtitles::language)
+        for (std::size_t i = 1; i < subtitle_sources_.size(); ++i)
+            if (same_language(subtitle_sources_[i].language, memory_->subtitle_language()))
+            {
+                subtitle_choice_ = static_cast<int>(i);
+                if (subtitle_sources_[i].stream >= 0)
+                    engine_->select_subtitle(subtitle_sources_[i].stream, 0.0);
+                break;
+            }
     hdr_ = context.hdr;
     for (const hui::video::StreamInfo &stream : engine_->info().streams)
         if (stream.index == engine_->video_stream() &&
@@ -169,7 +192,7 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
     // (D65); the console mixes it down itself for a stereo TV.
     int channels = 0;
     for (const hui::video::StreamInfo &stream : engine_->info().streams)
-        if (stream.index == engine_->audio_stream())
+        if (stream.index == chosen_audio)
             channels = stream.channels;
     if (engine_->has_audio() && channels > 2 && context.surround != nullptr &&
         context.surround->open())
@@ -198,7 +221,7 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
     if (surround_)
     {
         for (std::size_t i = 0; i < sound_streams_.size(); ++i)
-            if (sound_streams_[i] == engine_->audio_stream())
+            if (sound_streams_[i] == chosen_audio)
                 sound_choice_ = static_cast<int>(i);
     }
     else if (engine_->has_audio() && context.mixer != nullptr)
@@ -208,14 +231,39 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
             stereo->start(std::move(source_of_sound));
         player_ = std::move(stereo);
         for (std::size_t i = 0; i < sound_streams_.size(); ++i)
-            if (sound_streams_[i] == engine_->audio_stream())
+            if (sound_streams_[i] == chosen_audio)
                 sound_choice_ = static_cast<int>(i);
     }
     else if (engine_->has_audio())
     {
         engine_->select_audio(-1, 0.0);
     }
+    // Where this film was left, unless that was barely started or the end (D73).
+    if (memory_ != nullptr)
+    {
+        const double resume = memory_->resume_at(path_, engine_->duration());
+        if (resume > 0.0)
+        {
+            restart_at(resume);
+            show_note("Resumed at " + format_clock(resume));
+        }
+    }
     engine_->start();
+}
+
+void VideoViewer::show_note(std::string text)
+{
+    note_ = std::move(text);
+    note_timer_ = 4.0f;
+}
+
+void VideoViewer::remember_position()
+{
+    if (memory_ == nullptr || !engine_)
+        return;
+    memory_->remember_position(path_, position(), engine_->duration());
+    memory_->save();
+    memory_timer_ = 0.0f;
 }
 
 VideoViewer::~VideoViewer()
@@ -225,6 +273,7 @@ VideoViewer::~VideoViewer()
 
 void VideoViewer::close()
 {
+    remember_position();
     if (hdr_on_ && hdr_ != nullptr)
     {
         hdr_->leave();
@@ -297,7 +346,22 @@ void VideoViewer::load_external(hui::explorer::Source *source, const std::string
     if (!hui::video::load_subtitle_file(bytes, track, &problem))
         return;
     external_.push_back(std::move(track));
-    subtitle_sources_.push_back({file, -1, static_cast<int>(external_.size()) - 1});
+    // "Film.nl.srt", "Film.eng.forced.srt": the first tag after the film's name, when it looks
+    // like a language (two or three letters).
+    std::string language;
+    std::string inner = file.substr(0, file.rfind('.'));
+    const std::size_t film_end = inner.find('.');
+    if (film_end != std::string::npos)
+    {
+        std::string tag = inner.substr(film_end + 1);
+        tag = tag.substr(0, tag.find('.'));
+        const bool letters = std::all_of(tag.begin(), tag.end(), [](unsigned char c) {
+            return std::isalpha(c) != 0;
+        });
+        if ((tag.size() == 2 || tag.size() == 3) && letters)
+            language = lower(tag);
+    }
+    subtitle_sources_.push_back({file, -1, static_cast<int>(external_.size()) - 1, language});
 }
 
 std::vector<std::string> VideoViewer::subtitle_choices() const
@@ -341,6 +405,9 @@ void VideoViewer::cycle_subtitles(double at)
 {
     subtitle_choice_ = (subtitle_choice_ + 1) % static_cast<int>(subtitle_sources_.size());
     const SubtitleSource &source = subtitle_sources_[static_cast<std::size_t>(subtitle_choice_)];
+    // Picked by hand: the next film starts with the same (off, or this language when known).
+    if (memory_ != nullptr && (subtitle_choice_ == 0 || !source.language.empty()))
+        memory_->remember_subtitles(subtitle_choice_ == 0 ? std::string() : source.language);
     if (source.stream >= 0)
     {
         engine_->select_subtitle(source.stream, at);
@@ -359,7 +426,12 @@ void VideoViewer::cycle_sound(int step, double at)
         return;
     const int count = static_cast<int>(sound_streams_.size());
     sound_choice_ = ((sound_choice_ + step) % count + count) % count;
-    engine_->select_audio(sound_streams_[static_cast<std::size_t>(sound_choice_)], at);
+    const int stream = sound_streams_[static_cast<std::size_t>(sound_choice_)];
+    if (memory_ != nullptr)
+        for (const hui::video::StreamInfo &info : engine_->info().streams)
+            if (info.index == stream)
+                memory_->remember_audio_language(info.language);
+    engine_->select_audio(stream, at);
     restart_at(at);
 }
 
@@ -438,6 +510,10 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
     }
 
     overlay_ = std::max(0.0f, overlay_ - dt);
+    note_timer_ = std::max(0.0f, note_timer_ - dt);
+    // The position is written now and then while playing, so a crash or a power cut loses little.
+    if (!paused_ && !ended_ && (memory_timer_ += dt) >= 30.0f)
+        remember_position();
     const double now = position();
     bool touched = false;
 
@@ -656,6 +732,16 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
             bottom_y -= static_cast<float>(lines.size()) * step;
     }
 
+    if (note_timer_ > 0.0f && !note_.empty())
+    {
+        const float alpha = std::min(1.0f, note_timer_ / 0.5f);
+        const float inset = fullscreen_ ? 96.0f : 32.0f;
+        const float width = regular.font != nullptr ? regular.measure(note_, 28.0f) : 300.0f;
+        canvas.list.rounded_rect({area.x + inset, area.y + 40.0f, width + 40.0f, 52.0f}, 10.0f,
+                                 ink({0.0f, 0.0f, 0.0f, 0.62f * alpha}));
+        ui::text(canvas.list, regular, note_, area.x + inset + 20.0f, area.y + 76.0f, 28.0f,
+                 ink({1.0f, 1.0f, 1.0f, alpha}));
+    }
     if (!bar)
         return;
     // The control bar: what is playing, the time, the progress and the tracks in use.

@@ -22,6 +22,11 @@
 namespace hui::viewer
 {
 
+// Whether two language tags name the same language: files say "en", "eng", "nl", "dut" or "nld"
+// for the same thing (ISO 639-1 and both forms of ISO 639-2). Case does not matter; an empty tag
+// matches nothing.
+bool same_language(const std::string &a, const std::string &b);
+
 class MediaMemory
 {
   public:

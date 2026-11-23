@@ -49,6 +49,8 @@ class TextureHost
                         const std::uint16_t *rgba) = 0;
 };
 
+class MediaMemory;
+
 // The display's HDR10 mode (the console's; D71). Only one viewer uses it at a time.
 class HdrOutput
 {
@@ -76,6 +78,8 @@ struct ViewerContext
     hui::audio::SurroundSink *surround = nullptr;
     // HDR10 output for HDR films in full screen (D68); null: HDR films are tone-mapped to SDR.
     HdrOutput *hdr = nullptr;
+    // Where films were left and the languages last picked (D73); null: nothing is remembered.
+    MediaMemory *memory = nullptr;
 };
 
 // The file to open: where it is and what the listing knew of it.

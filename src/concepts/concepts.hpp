@@ -14,6 +14,7 @@ namespace hui::viewer
 {
 class HandlerRegistry;
 class HdrOutput;
+class MediaMemory;
 class TextureHost;
 } // namespace hui::viewer
 namespace hui::audio
@@ -37,7 +38,8 @@ void set_about_qr(std::uint32_t (*load_png)(const std::string &path), std::strin
 // films then play in stereo). Null in tests; a viewer that needs one says so on screen.
 void set_explorer_services(hui::viewer::TextureHost *textures, hui::audio::Mixer *mixer,
                            hui::audio::SurroundSink *surround = nullptr,
-                           hui::viewer::HdrOutput *hdr = nullptr);
+                           hui::viewer::HdrOutput *hdr = nullptr,
+                           hui::viewer::MediaMemory *memory = nullptr);
 // A handler registry other than the built-in one (tests); null brings the built-in one back.
 void set_explorer_registry(const hui::viewer::HandlerRegistry *registry);
 // The folders the explorer's two panes open in (the console's /data and /mnt; temporary ones in

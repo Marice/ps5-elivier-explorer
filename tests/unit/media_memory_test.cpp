@@ -101,4 +101,17 @@ TEST(MediaMemory, ItIsSavedAndLoadedAgain)
     fs::remove_all(folder);
 }
 
+TEST(MediaMemory, LanguageTagsOfOneLanguageMatch)
+{
+    using hui::viewer::same_language;
+    EXPECT_TRUE(same_language("nl", "dut"));
+    EXPECT_TRUE(same_language("NLD", "nl"));
+    EXPECT_TRUE(same_language("eng", "en"));
+    EXPECT_TRUE(same_language("ger", "deu"));
+    EXPECT_TRUE(same_language("xyz", "XYZ")); // unknown tags still match themselves
+    EXPECT_FALSE(same_language("en", "nl"));
+    EXPECT_FALSE(same_language("", "en"));
+    EXPECT_FALSE(same_language("", ""));
+}
+
 } // namespace

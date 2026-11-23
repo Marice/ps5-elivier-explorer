@@ -74,7 +74,56 @@ bool at_the_end(double seconds, double duration)
     return duration - seconds <= std::min(kEndSeconds, duration * kEndFraction);
 }
 
+// One language under its tags: two letters, the bibliographic and the terminology three letters.
+struct LanguageTags
+{
+    const char *tags[3];
+};
+
+constexpr LanguageTags kLanguages[] = {
+    {{"en", "eng", "eng"}}, {{"nl", "dut", "nld"}}, {{"de", "ger", "deu"}},
+    {{"fr", "fre", "fra"}}, {{"es", "spa", "spa"}}, {{"it", "ita", "ita"}},
+    {{"pt", "por", "por"}}, {{"ja", "jpn", "jpn"}}, {{"zh", "chi", "zho"}},
+    {{"ko", "kor", "kor"}}, {{"ru", "rus", "rus"}}, {{"pl", "pol", "pol"}},
+    {{"sv", "swe", "swe"}}, {{"da", "dan", "dan"}}, {{"no", "nor", "nob"}},
+    {{"fi", "fin", "fin"}}, {{"tr", "tur", "tur"}}, {{"ar", "ara", "ara"}},
+    {{"cs", "cze", "ces"}}, {{"el", "gre", "ell"}}, {{"he", "heb", "heb"}},
+    {{"hu", "hun", "hun"}}, {{"ro", "rum", "ron"}}, {{"uk", "ukr", "ukr"}},
+};
+
+std::string lowered(const std::string &text)
+{
+    std::string out = text;
+    for (char &c : out)
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    return out;
+}
+
 } // namespace
+
+bool same_language(const std::string &a, const std::string &b)
+{
+    if (a.empty() || b.empty())
+        return false;
+    const std::string x = lowered(a);
+    const std::string y = lowered(b);
+    if (x == y)
+        return true;
+    for (const LanguageTags &language : kLanguages)
+    {
+        bool has_x = false;
+        bool has_y = false;
+        for (const char *tag : language.tags)
+        {
+            has_x = has_x || x == tag;
+            has_y = has_y || y == tag;
+        }
+        if (has_x && has_y)
+            return true;
+    }
+    return false;
+}
 
 MediaMemory::MediaMemory(std::string file) : file_(std::move(file))
 {

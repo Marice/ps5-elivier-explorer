@@ -30,6 +30,7 @@
 #include "platform/ps5/display_egl.hpp"
 #include "platform/ps5/hen_access.hpp"
 #include "platform/ps5/hdr_output.hpp"
+#include "viewer/media_memory.hpp"
 #include "platform/ps5/hw_video.hpp"
 #include "platform/ps5/surround_out.hpp"
 #include "platform/ps5/video_out_hook.hpp"
@@ -383,7 +384,11 @@ int main()
     hui::concepts::set_about_qr(hui::gfx::load_png_texture, assets + "/about/ko-fi-qr.png");
     hui::concepts::set_explorer_start("/data", "/mnt");
     hui::gfx::GlTextureHost texture_host;
-    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out, &hdr_out);
+    // Where films were left and the languages last picked, beside the settings (D73).
+    viewer::MediaMemory media_memory(std::string(kDataRoot) + "/media.bin");
+    media_memory.load();
+    hui::concepts::set_explorer_services(&texture_host, &mixer, &surround_out, &hdr_out,
+                                         &media_memory);
     explorer::trace("shell");
     app::Shell shell(fonts, catalog, kDataRoot, renderer.glass_texture());
     const std::string version = read_content_version(g_app_folder + "/sce_sys/param.json");

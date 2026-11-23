@@ -9,6 +9,7 @@
 #include "audio/surround.hpp"
 #include "explorer/local_source.hpp"
 #include "explorer/trace.hpp"
+#include "viewer/media_memory.hpp"
 #include "viewer/registry.hpp"
 #include "viewer/video_viewer.hpp"
 
@@ -124,6 +125,7 @@ class VideoViewerTest : public ConceptFixture
         context.mixer = with_mixer ? &mixer_ : nullptr;
         context.surround = surround_;
         context.hdr = hdr_;
+        context.memory = memory_;
         FileRef file;
         file.source = &source_;
         file.path = path;
@@ -175,6 +177,7 @@ class VideoViewerTest : public ConceptFixture
     hui::audio::Mixer mixer_;
     hui::audio::SurroundSink *surround_ = nullptr;
     hui::viewer::HdrOutput *hdr_ = nullptr;
+    hui::viewer::MediaMemory *memory_ = nullptr;
 };
 
 TEST_F(VideoViewerTest, WritesOneLineASecondToTheTraceWhilePlaying)
@@ -301,6 +304,25 @@ TEST_F(VideoViewerTest, AnSdrFilmOrARefusedHdrModeStaysSdr)
     tick(*refused, press(hui::Action::north));
     EXPECT_EQ(hdr.entered, 1);
     EXPECT_FALSE(refused->hdr_output());
+}
+
+TEST_F(VideoViewerTest, TheLanguagesLastPickedAreChosenAgain)
+{
+    hui::viewer::MediaMemory memory;
+    memory.remember_audio_language("dut"); // the file says "nld": the same language
+    memory.remember_subtitles("nl");
+    memory_ = &memory;
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/multi-track.mkv", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    EXPECT_EQ(viewer->sound_choice(), 1);    // Nederlands, the second track
+    EXPECT_EQ(viewer->subtitle_choice(), 2); // off, eng, nld
+
+    // Picked by hand: remembered for the next film.
+    tick(*viewer, press(hui::Action::page_next)); // around to English
+    EXPECT_TRUE(hui::viewer::same_language(memory.audio_language(), "en"));
+    tick(*viewer, press(hui::Action::west)); // subtitles around to off
+    EXPECT_EQ(memory.subtitle_choice(), hui::viewer::MediaMemory::Subtitles::off);
 }
 
 TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)

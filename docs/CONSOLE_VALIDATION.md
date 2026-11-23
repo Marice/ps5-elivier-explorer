@@ -117,7 +117,7 @@ PS5_HOST=<console address> tools/console-probe.py results/probe-1 safe
 | Name | What it asks | What it changes |
 | --- | --- | --- |
 | `memory` | How much direct memory can be had in blocks of 16 MiB up to 1 GiB (type 12) and 256 MiB (type 11), how fast it is written and read, and what flexible memory is left | Allocates and releases it again |
-| `upload` | What it costs, in ms, to upload a 1080p and a 4K frame (8-bit NV12 and 10-bit) to textures, directly and through a buffer | Creates and deletes textures |
+| `upload` | What it costs, in ms, to upload a 1080p and a 4K frame (8-bit NV12 and 10-bit) and a finished 1080p RGBA picture at 8 and 16 bits to textures, directly and through a buffer | Creates and deletes textures |
 | `egl` | Which EGL extensions and window-surface formats the driver offers (10-bit, float, HDR colour spaces) | Nothing |
 | `decoder-load` | Whether `libSceVideodec2` can be loaded from this title and its nine functions looked up. No decoder function is called | Loads a system module |
 | `decoder-bind` | Calls `sceVideodec2QueryComputeMemoryInfo`, the one read-only function of the library, in a build made with `make HW_DECODE=1` (an import stub of libSceVideodec2 is linked, so that the loader loads the system library at start; D47). Runs alone | If the firmware does not export a name of the stub, the app is refused at start; put the normal build back |

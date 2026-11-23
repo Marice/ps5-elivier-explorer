@@ -211,6 +211,14 @@ constexpr FrameShape kFrames[] = {
     {"p010_4k",
      {3840, 2160, GL_R16, GL_RED, GL_UNSIGNED_SHORT, 3840u * 2160u * 2u},
      {1920, 1080, GL_RG16, GL_RG, GL_UNSIGNED_SHORT, 1920u * 1080u * 4u}},
+    // One finished RGBA picture (no chroma plane): what the CPU conversion of the first video
+    // viewer uploads (docs/decision-log.md, D51). 8 bits per channel, and 16 as a comparison.
+    {"rgba8_1080p",
+     {1920, 1080, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 1920u * 1080u * 4u},
+     {0, 0, 0, 0, 0, 0}},
+    {"rgba16_1080p",
+     {1920, 1080, GL_RGBA16, GL_RGBA, GL_UNSIGNED_SHORT, 1920u * 1080u * 8u},
+     {0, 0, 0, 0, 0, 0}},
 };
 
 constexpr int kWarmup = 5;
@@ -263,14 +271,18 @@ void time_method(Report &report, const FrameShape &frame, GLuint luma, GLuint ch
             std::memcpy(mapped, source, all_bytes);
             glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
             upload_plane(luma, frame.luma, nullptr);
-            const auto chroma_offset = static_cast<std::uintptr_t>(frame.luma.bytes);
-            upload_plane(chroma, frame.chroma, reinterpret_cast<const void *>(chroma_offset));
+            if (frame.chroma.width > 0)
+            {
+                const auto chroma_offset = static_cast<std::uintptr_t>(frame.luma.bytes);
+                upload_plane(chroma, frame.chroma, reinterpret_cast<const void *>(chroma_offset));
+            }
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         }
         else
         {
             upload_plane(luma, frame.luma, source);
-            upload_plane(chroma, frame.chroma, source + frame.luma.bytes);
+            if (frame.chroma.width > 0)
+                upload_plane(chroma, frame.chroma, source + frame.luma.bytes);
         }
         const std::int64_t called = sys::monotonic_us();
         glFinish();
@@ -319,7 +331,7 @@ void probe_upload(Report &report)
         report.add("upload", std::string(frame.name) + "_frame_mib",
                    static_cast<std::int64_t>((all_bytes + kMiB - 1) / kMiB));
         const GLuint luma = make_texture(frame.luma);
-        const GLuint chroma = make_texture(frame.chroma);
+        const GLuint chroma = frame.chroma.width > 0 ? make_texture(frame.chroma) : 0;
         GLuint buffer = 0;
         glGenBuffers(1, &buffer);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
@@ -333,7 +345,8 @@ void probe_upload(Report &report)
 
         glDeleteBuffers(1, &buffer);
         glDeleteTextures(1, &luma);
-        glDeleteTextures(1, &chroma);
+        if (chroma != 0)
+            glDeleteTextures(1, &chroma);
         std::free(source);
     }
 }

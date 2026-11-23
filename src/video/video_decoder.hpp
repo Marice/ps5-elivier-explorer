@@ -11,6 +11,7 @@
 
 #include "video/av_sync.hpp"
 #include "video/colour.hpp"
+#include "video/decoder_result.hpp"
 #include "video/demuxer.hpp"
 
 #include <cstdint>
@@ -44,21 +45,6 @@ struct Frame
     // Keeps the buffers alive for as long as the Frame (or a copy of it) is held. A decoder may
     // wait for them to come back before it can decode more, so do not hoard pictures.
     std::shared_ptr<const void> owner;
-};
-
-enum class SendResult
-{
-    accepted,
-    full,  // take pictures out with receive(), then offer the packet again
-    error, // the decoder cannot go on
-};
-
-enum class ReceiveResult
-{
-    frame,
-    need_input, // give it more packets
-    end,        // after send_end(): everything has come out
-    error,
 };
 
 class VideoDecoder

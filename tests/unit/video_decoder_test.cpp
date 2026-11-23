@@ -2,6 +2,8 @@
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "video_fixtures.hpp"
+
 #include "video/software_decoder.hpp"
 
 #include <gtest/gtest.h>
@@ -10,38 +12,19 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
-
-#ifndef HUI_SOURCE_DIR
-#define HUI_SOURCE_DIR "."
-#endif
 
 namespace
 {
 
 using namespace hui::video;
 
-const std::string kDir = std::string(HUI_SOURCE_DIR) + "/tests/fixtures/video/";
+using hui::testing::reader_for;
 
 std::vector<std::uint8_t> read_all(const std::string &name)
 {
-    std::ifstream file(kDir + name, std::ios::binary);
-    return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(file),
-                                     std::istreambuf_iterator<char>());
-}
-
-hui::audio::ByteReader reader_for(const std::vector<std::uint8_t> &bytes)
-{
-    return [&bytes](std::uint64_t offset, void *buffer, std::size_t size) -> std::int64_t {
-        if (offset >= bytes.size())
-            return 0;
-        const std::size_t count = std::min<std::size_t>(size, bytes.size() - offset);
-        std::memcpy(buffer, bytes.data() + offset, count);
-        return static_cast<std::int64_t>(count);
-    };
+    return hui::testing::read_video_fixture(name);
 }
 
 int video_stream_of(const Demuxer &demuxer)

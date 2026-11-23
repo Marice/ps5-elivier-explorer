@@ -180,6 +180,9 @@ constexpr app::TourStep kTour[] = {
     {2.5f, 0, Direction::none, "files-video"},
     {0.3f, action_bit(Action::west), Direction::none, nullptr},
     {1.0f, 0, Direction::none, "files-video-subtitles"},
+    {0.3f, action_bit(Action::north), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-fullscreen"},
+    {0.3f, action_bit(Action::north), Direction::none, nullptr},
     {0.3f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
 };
@@ -761,6 +764,14 @@ class ExplorerScreen final : public app::Concept
         frame.scene.push_opacity(tween::cubic_out(age_ / 0.3f));
         ui::Canvas canvas{frame.scene, context_.fonts, frame.glass_texture, clock_};
         ui::Canvas top{frame.overlay, context_.fonts, frame.glass_texture, clock_};
+        if (viewer_ && viewer_->fullscreen())
+        {
+            viewer_->draw(paint, canvas,
+                          {0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
+            toasts_.draw(top);
+            frame.scene.pop_opacity();
+            return;
+        }
         if (viewer_)
         {
             // The open file has the whole screen: its name on top, then its own view and hints.

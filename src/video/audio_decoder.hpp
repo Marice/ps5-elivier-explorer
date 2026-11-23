@@ -52,6 +52,11 @@ class AudioDecoder
     virtual int damaged_packets() const = 0;
 };
 
+// A soft limit for mixed-down sound (docs/decision-log.md, D56): unchanged up to 0.8, then bent
+// smoothly towards 1.0 so that the rare peak of a full-level surround mix-down never clips hard.
+// Continuous and with slope 1 at the knee; odd, so negative samples mirror positive ones.
+float limit_sample(float sample);
+
 // Null and `error` filled when the stream cannot be played: no decoder for the codec, more than
 // eight channels, or a sample rate outside 8 to 192 kHz.
 std::unique_ptr<AudioDecoder> open_audio_decoder(const Demuxer &demuxer, int stream,

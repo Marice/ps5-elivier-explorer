@@ -125,6 +125,29 @@ TEST_F(VideoViewerTest, WritesOneLineASecondToTheTraceWhilePlaying)
     EXPECT_NE(text.find("starved="), std::string::npos);
 }
 
+TEST_F(VideoViewerTest, TriangleSwitchesToFullScreenAndBack)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    EXPECT_FALSE(viewer->fullscreen());
+    bool offered = false;
+    for (const hui::ui::Hint &hint : viewer->hints())
+        offered = offered || hint.button == hui::ui::Button::triangle;
+    EXPECT_TRUE(offered);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::north));
+    EXPECT_TRUE(viewer->fullscreen());
+    // Full screen draws its own hint row with the control bar: more than the window does.
+    const std::size_t window_shapes = [&] {
+        tick(*viewer, press(hui::Action::north));
+        return drawn(*viewer);
+    }();
+    EXPECT_FALSE(viewer->fullscreen());
+    tick(*viewer, press(hui::Action::north));
+    EXPECT_GT(drawn(*viewer), window_shapes);
+}
+
 TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)
 {
     FakeTextures textures;
@@ -321,8 +344,8 @@ TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)
     FakeTextures textures;
     const auto plain = open(kDir + "/h264-aac.mp4", &textures);
     const auto rich = open(kDir + "/multi-track.mkv", &textures);
-    EXPECT_EQ(plain->hints().size(), 3u);
-    EXPECT_EQ(rich->hints().size(), 5u); // sound and subtitles can be chosen
+    EXPECT_EQ(plain->hints().size(), 4u);
+    EXPECT_EQ(rich->hints().size(), 6u); // sound and subtitles can be chosen
 }
 
 TEST(VideoHandler, ClaimsVideoByExtensionAndByContent)

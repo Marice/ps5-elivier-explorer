@@ -9,6 +9,7 @@
 
 // The console's heap size (src/runtime/app_heap.c); absent on a PC.
 extern "C" std::size_t hui_heap_capacity(int *direct) __attribute__((weak));
+#include "ui/glyphs.hpp"
 #include "viewer/sound_viewer.hpp"
 
 #include <algorithm>
@@ -25,6 +26,7 @@ constexpr float kSeekStep = 10.0f;     // seconds per D-pad press
 constexpr float kSeekInterval = 0.12f; // seconds between seeks while the D-pad is held
 constexpr float kOverlaySeconds = 4.0f;
 constexpr float kBarHeight = 150.0f;
+constexpr float kHintBand = 90.0f; // the hint row the bar carries in full screen
 constexpr std::size_t kMaxExternalSubtitles = 8;
 constexpr float kSubtitleSize = 38.0f;
 
@@ -113,6 +115,13 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
     { return source->read_range(path, offset, buffer, size); };
     std::string reason;
     hui::video::EngineOptions options;
+    if (hui_heap_capacity != nullptr)
+    {
+        int direct = 0;
+        const std::size_t capacity = hui_heap_capacity(&direct);
+        hui::explorer::trace("film: heap %zu MiB of %s memory", capacity >> 20,
+                             direct != 0 ? "direct" : "flexible");
+    }
     // With the 1 GiB heap a 1080p film may keep its full queue of pictures; with the old 128 MiB
     // the engine's default budget keeps it short enough to fit (docs/decision-log.md, D54).
     if (hui_heap_capacity == nullptr || hui_heap_capacity(nullptr) >= (512u << 20))
@@ -405,6 +414,11 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
         touched = true;
         cycle_subtitles(now);
     }
+    if (input.is_pressed(Action::north))
+    {
+        touched = true; // the bar comes up, so the new hints are seen
+        fullscreen_ = !fullscreen_;
+    }
     switch (input.nav)
     {
     case Direction::left:
@@ -453,6 +467,7 @@ std::span<const ui::Hint> VideoViewer::hints() const
     static constexpr ui::Hint kBasic[] = {
         {ui::Button::cross, "Play / pause"},
         {ui::Button::dpad, "Seek, volume"},
+        {ui::Button::triangle, "Full screen"},
         {ui::Button::circle, "Back"},
     };
     static constexpr ui::Hint kTracks[] = {
@@ -460,12 +475,14 @@ std::span<const ui::Hint> VideoViewer::hints() const
         {ui::Button::dpad, "Seek, volume"},
         {ui::Button::l1, "Sound", ui::Button::r1},
         {ui::Button::square, "Subtitles"},
+        {ui::Button::triangle, "Full screen"},
         {ui::Button::circle, "Back"},
     };
     static constexpr ui::Hint kSubtitles[] = {
         {ui::Button::cross, "Play / pause"},
         {ui::Button::dpad, "Seek, volume"},
         {ui::Button::square, "Subtitles"},
+        {ui::Button::triangle, "Full screen"},
         {ui::Button::circle, "Back"},
     };
     const bool sounds = sound_streams_.size() > 1;
@@ -514,7 +531,9 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
 
     // Subtitles, with a dark edge so that they read on any picture.
     const std::vector<hui::video::SubtitleLine> cues = subtitle_lines(at);
-    float bottom_y = shown.y + shown.h - 40.0f - (bar ? kBarHeight : 0.0f);
+    // Full screen has no hint row below the viewer: the bar carries its own under the controls.
+    const float bar_height = kBarHeight + (fullscreen_ ? kHintBand : 0.0f);
+    float bottom_y = std::min(shown.y + shown.h, area.y + area.h - (bar ? bar_height : 0.0f)) - 40.0f;
     float top_y = shown.y + 64.0f;
     for (auto cue = cues.rbegin(); cue != cues.rend(); ++cue)
     {
@@ -549,10 +568,23 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
     if (!bar)
         return;
     // The control bar: what is playing, the time, the progress and the tracks in use.
-    const gfx::Rect panel{area.x, area.y + area.h - kBarHeight, area.w, kBarHeight};
-    canvas.list.rounded_rect(panel, 0.0f, {0.0f, 0.0f, 0.0f, 0.62f});
-    const float x = panel.x + 32.0f;
-    const float width = panel.w - 64.0f;
+    const gfx::Rect panel{area.x, area.y + area.h - bar_height, area.w, kBarHeight};
+    canvas.list.rounded_rect({panel.x, panel.y, panel.w, bar_height}, 0.0f,
+                             {0.0f, 0.0f, 0.0f, 0.62f});
+    if (fullscreen_)
+    {
+        // Light glyphs and white labels on the dark bar, whatever the theme.
+        ui::GlyphStyle glyphs = ui::GlyphStyle::dark();
+        glyphs.label = kWhite;
+        ui::HintLayout layout;
+        layout.cy = area.y + area.h - kHintBand / 2.0f - 8.0f;
+        const std::span<const ui::Hint> row = hints();
+        ui::draw_hints(canvas.list, canvas.fonts, glyphs, row.data(), static_cast<int>(row.size()),
+                       area.x + area.w - 96.0f, true, layout);
+    }
+    const float inset = fullscreen_ ? 96.0f : 32.0f; // full screen keeps to the safe area
+    const float x = panel.x + inset;
+    const float width = panel.w - 2.0f * inset;
     ui::text(canvas.list, regular, fit(regular, name_, 30.0f, width), x, panel.y + 40.0f, 30.0f,
              kWhite);
 

@@ -171,7 +171,24 @@ TEST(AudioDecoder, OpusInWebm)
     EXPECT_GT(sound.frames(), kAudioOutputRate); // more than a second came out
 }
 
-TEST(AudioDecoder, SurroundIsMixedDownWithoutClipping)
+TEST(AudioDecoder, TheLimitLeavesNormalSoundAloneAndBendsPeaksBelowFullScale)
+{
+    EXPECT_EQ(limit_sample(0.0f), 0.0f);
+    EXPECT_EQ(limit_sample(0.5f), 0.5f);
+    EXPECT_EQ(limit_sample(-0.8f), -0.8f);
+    EXPECT_NEAR(limit_sample(0.801f), 0.801f, 1e-3f); // no step at the knee
+    float last = 0.8f;
+    for (int i = 1; i <= 100; ++i)
+    {
+        const float bent = limit_sample(0.8f + 0.05f * static_cast<float>(i));
+        EXPECT_GT(bent, last); // louder stays louder
+        EXPECT_LT(bent, 1.0f);
+        EXPECT_EQ(limit_sample(-0.8f - 0.05f * static_cast<float>(i)), -bent);
+        last = bent;
+    }
+}
+
+TEST(AudioDecoder, SurroundIsMixedDownAtTheUsualWeights)
 {
     const auto bytes = read_all("ac3-surround.mkv");
     {
@@ -184,11 +201,10 @@ TEST(AudioDecoder, SurroundIsMixedDownWithoutClipping)
     const Sound sound = decode_audio(bytes);
     ASSERT_TRUE(sound.error.empty()) << sound.error;
     EXPECT_EQ(sound.decoder, "ac3");
-    // The same 0.125 tone on every channel. Adding the channels with the usual weights would give
-    // about 0.30; the matrix is scaled to keep the sum at full scale, which brings it back to
-    // about 0.125.
-    EXPECT_GT(peak_of(sound), 0.08f);
-    EXPECT_LT(peak_of(sound), 0.2f);
+    // The same 0.125 tone on every channel. Front + 0.707 centre + 0.707 surround gives about
+    // 0.30 on each side (LFE is left out); the old scaled matrix gave about 0.125 (D56).
+    EXPECT_GT(peak_of(sound), 0.25f);
+    EXPECT_LT(peak_of(sound), 0.36f);
 }
 
 TEST(AudioDecoder, ChunksFollowOneAnotherInTime)

@@ -47,6 +47,10 @@ class VideoViewer final : public Viewer
     {
         return closing_;
     }
+    bool fullscreen() const override
+    {
+        return fullscreen_;
+    }
     void close() override;
 
     const std::string &error() const
@@ -119,6 +123,7 @@ class VideoViewer final : public Viewer
     bool paused_ = false;
     bool ended_ = false;
     bool closing_ = false;
+    bool fullscreen_ = false;
     float overlay_ = 4.0f; // seconds the control bar stays up after the last input
     float pending_seek_ = 0.0f;
     float seek_cooldown_ = 0.0f;

@@ -145,6 +145,7 @@ class FfmpegAudioDecoder final : public AudioDecoder
         if (count <= 0)
             return ReceiveResult::end;
         chunk.stereo.resize(static_cast<std::size_t>(count) * 2);
+        limit(chunk);
         chunk.pts = kNoTimestamp;
         return ReceiveResult::frame;
     }
@@ -177,8 +178,12 @@ class FfmpegAudioDecoder final : public AudioDecoder
                                          frame.sample_rate, 0, nullptr);
         if (result >= 0)
         {
-            // Scale the mix-down so that the loudest sum is full scale: no clipping.
-            av_opt_set_double(resampler_, "rematrix_maxval", 1.0, 0);
+            // A mix-down at the usual weights (centre and surrounds at -3 dB), not scaled so that
+            // the loudest possible sum fits: that made 5.1 films 7.7 dB quieter than stereo ones
+            // (docs/decision-log.md, D56). The rare peak above full scale goes through
+            // limit_sample(). Stereo and mono are not touched by this.
+            mixing_down_ = layout.nb_channels > 2;
+            av_opt_set_double(resampler_, "rematrix_maxval", mixing_down_ ? 8.0 : 1.0, 0);
             if (layout.nb_channels == 1)
             {
                 // FFmpeg's own mono to stereo puts the signal on both sides at -3 dB, which makes
@@ -233,7 +238,17 @@ class FfmpegAudioDecoder final : public AudioDecoder
         if (count < 0)
             return -1;
         chunk.stereo.resize(static_cast<std::size_t>(count) * 2);
+        limit(chunk);
         return count;
+    }
+
+    // Only a mix-down can go over full scale (its matrix is not scaled down, D56).
+    void limit(AudioChunk &chunk) const
+    {
+        if (!mixing_down_)
+            return;
+        for (float &sample : chunk.stereo)
+            sample = limit_sample(sample);
     }
 
     AVCodecContext *context_;
@@ -241,6 +256,7 @@ class FfmpegAudioDecoder final : public AudioDecoder
     StreamTiming timing_;
     AVFrame *scratch_;
     SwrContext *resampler_ = nullptr;
+    bool mixing_down_ = false;
     int input_format_ = -1;
     int input_rate_ = 0;
     AVChannelLayout input_layout_ = {};
@@ -250,6 +266,17 @@ class FfmpegAudioDecoder final : public AudioDecoder
 };
 
 } // namespace
+
+float limit_sample(float sample)
+{
+    constexpr float kKnee = 0.8f;
+    const float size = sample < 0.0f ? -sample : sample;
+    if (size <= kKnee)
+        return sample;
+    const float over = (size - kKnee) / (1.0f - kKnee);
+    const float bent = kKnee + (1.0f - kKnee) * over / (1.0f + over);
+    return sample < 0.0f ? -bent : bent;
+}
 
 std::unique_ptr<AudioDecoder> open_audio_decoder(const Demuxer &demuxer, int stream,
                                                  std::string *error)

@@ -10,8 +10,11 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 - A video viewer (`.mp4 .mkv .webm .avi .mov` and more): H.264, H.265, VP9, AV1 and older codecs decoded in
   software up to 1920 x 1088, with sound (stereo output; surround is mixed down) and subtitles (the file's own
   text tracks, and `.srt`, `.vtt`, `.ass` or `.ssa` files beside the film). Cross plays and pauses, the D-pad seeks
-  and changes the volume, L1 and R1 choose the sound track, Square the subtitles. Tested on a PC only: not yet
-  tried on a console, and its speed there is not known.
+  and changes the volume, L1 and R1 choose the sound track, Square the subtitles, Triangle switches to full
+  screen and back. On one console, two 1080p HEVC films (8-bit and 10-bit, 5.1 sound) played at 24 pictures a
+  second with none late; surround is mixed down at the usual weights with a soft limit on peaks.
+- The app heap is 1 GiB of direct memory when the console gives it, and 128 MiB of flexible memory as before
+  when it does not (a 1080p film needs about 200 MiB).
 - `make video` builds FFmpeg, dav1d and zlib from pinned, checked sources (about ten minutes, once). The app
   grows by about 11 MB.
 - Console tools: `tools/console-install.py` and `tools/console-trace.py` put a build on a console over FTP and read

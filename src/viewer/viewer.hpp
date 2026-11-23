@@ -79,6 +79,12 @@ class Viewer
     // Must not change state: it may be drawn more than once a frame.
     virtual void draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &area) const = 0;
     virtual std::span<const ui::Hint> hints() const = 0;
+    // True while the viewer wants the whole screen: the screen then draws no title and no hint
+    // row, and passes the full 1920 x 1080 canvas to draw(); the viewer shows its own hints.
+    virtual bool fullscreen() const
+    {
+        return false;
+    }
     // True once the player asked to leave (Circle); the screen then calls close() and drops it.
     virtual bool closing() const = 0;
     // Gives back what the viewer holds that is not freed by its destructor alone: a playing

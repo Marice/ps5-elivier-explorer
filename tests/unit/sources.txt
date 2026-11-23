@@ -28,6 +28,8 @@ src/gfx/triangulate.cpp
 src/explorer/*.cpp
 src/video/av_sync.cpp
 src/video/colour.cpp
+src/video/ffmpeg_colour.cpp
+src/video/software_decoder.cpp
 src/video/demuxer.cpp
 src/video/utc_time.cpp
 src/viewer/*.cpp

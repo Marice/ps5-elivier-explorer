@@ -59,6 +59,13 @@ struct MediaInfo
     std::vector<StreamInfo> streams;
 };
 
+// How a stream counts time: its packets and frames carry whole ticks.
+struct StreamTiming
+{
+    double seconds_per_tick = 0.0;
+    double start_offset = 0.0; // seconds subtracted from every time so that the file starts at 0
+};
+
 struct AVPacketDeleter
 {
     void operator()(AVPacket *packet) const;
@@ -103,6 +110,7 @@ class Demuxer
 
     // For the decoders. Valid for the life of the demuxer; null for an index out of range.
     const AVCodecParameters *parameters(int stream) const;
+    StreamTiming timing(int stream) const;
 
   private:
     struct Impl;

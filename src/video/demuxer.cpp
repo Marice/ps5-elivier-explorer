@@ -4,6 +4,8 @@
 
 #include "video/demuxer.hpp"
 
+#include "video/ffmpeg_colour.hpp"
+
 #include <algorithm>
 #include <cerrno>
 
@@ -56,46 +58,6 @@ int bit_depth_of(const AVCodecParameters &parameters)
     const AVPixFmtDescriptor *descriptor =
         av_pix_fmt_desc_get(static_cast<AVPixelFormat>(parameters.format));
     return descriptor != nullptr ? descriptor->comp[0].depth : 0;
-}
-
-ColourInfo colour_of(const AVCodecParameters &parameters)
-{
-    ColourInfo colour;
-    switch (parameters.color_trc)
-    {
-    case AVCOL_TRC_SMPTE2084:
-        colour.transfer = Transfer::pq;
-        break;
-    case AVCOL_TRC_ARIB_STD_B67:
-        colour.transfer = Transfer::hlg;
-        break;
-    default:
-        break;
-    }
-    switch (parameters.color_space)
-    {
-    case AVCOL_SPC_BT2020_NCL:
-    case AVCOL_SPC_BT2020_CL:
-        colour.matrix = Matrix::bt2020;
-        break;
-    case AVCOL_SPC_BT709:
-        colour.matrix = Matrix::bt709;
-        break;
-    case AVCOL_SPC_BT470BG:
-    case AVCOL_SPC_SMPTE170M:
-        colour.matrix = Matrix::bt601;
-        break;
-    default:
-        // The file does not say. BT.2020 primaries or a PQ or HLG curve mean BT.2020; otherwise the
-        // usual rule: pictures below 720 lines are BT.601, larger ones BT.709.
-        if (parameters.color_primaries == AVCOL_PRI_BT2020 || colour.transfer != Transfer::sdr)
-            colour.matrix = Matrix::bt2020;
-        else
-            colour.matrix = parameters.height < 720 ? Matrix::bt601 : Matrix::bt709;
-        break;
-    }
-    colour.range = parameters.color_range == AVCOL_RANGE_JPEG ? Range::full : Range::limited;
-    return colour;
 }
 
 } // namespace
@@ -208,7 +170,9 @@ struct Demuxer::Impl
                 item.bit_depth = bit_depth_of(parameters);
                 const AVRational rate = av_guess_frame_rate(format, format->streams[i], nullptr);
                 item.frame_rate = rate.den > 0 ? av_q2d(rate) : 0.0;
-                item.colour = colour_of(parameters);
+                item.colour = colour_info(parameters.color_trc, parameters.color_space,
+                                          parameters.color_primaries, parameters.color_range,
+                                          parameters.height);
             }
             else if (item.kind == StreamKind::audio)
             {
@@ -332,6 +296,15 @@ const AVCodecParameters *Demuxer::parameters(int stream) const
     if (stream < 0 || static_cast<unsigned int>(stream) >= impl_->format->nb_streams)
         return nullptr;
     return impl_->format->streams[stream]->codecpar;
+}
+
+StreamTiming Demuxer::timing(int stream) const
+{
+    StreamTiming timing;
+    if (stream >= 0 && static_cast<unsigned int>(stream) < impl_->format->nb_streams)
+        timing.seconds_per_tick = av_q2d(impl_->format->streams[stream]->time_base);
+    timing.start_offset = impl_->start_offset;
+    return timing;
 }
 
 } // namespace hui::video

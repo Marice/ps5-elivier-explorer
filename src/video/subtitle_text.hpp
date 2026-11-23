@@ -60,6 +60,13 @@ class SubtitleTrack
     double longest_ = 0.0; // the longest cue, so that a lookup knows how far back to look
 };
 
+// One cue from raw text (markup, entities and ASS line breaks are handled as in the file readers):
+// the text is cleaned and cut to kMaxCueTextBytes, and the cue is added to the track. False when
+// it was empty, ends before it starts, or was a duplicate. `align` is the position when the text
+// itself says none.
+bool add_cue(SubtitleTrack &track, double start, double end, std::string_view raw_text,
+             CueAlign align = CueAlign::bottom);
+
 // Text file bytes to UTF-8: a byte order mark is read (UTF-8, UTF-16 either way), bytes that are
 // valid UTF-8 are kept as they are, and anything else is taken as Windows-1252 (the usual
 // encoding of old Western European subtitle files). Other code pages are not guessed.

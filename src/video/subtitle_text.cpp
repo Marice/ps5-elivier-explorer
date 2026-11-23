@@ -256,20 +256,6 @@ void limit_text(std::string &text)
     text.resize(end);
 }
 
-bool add_cue(SubtitleTrack &track, double start, double end, std::string_view raw_text,
-             CueAlign base_align)
-{
-    Cue cue;
-    cue.align = base_align;
-    cue.text = strip_markup(raw_text, &cue.align);
-    limit_text(cue.text);
-    if (cue.text.empty() || !(end > start) || start < 0.0)
-        return false;
-    cue.start = start;
-    cue.end = end;
-    return track.add(std::move(cue));
-}
-
 } // namespace
 
 // ---- the timeline ----------------------------------------------------------------------------
@@ -516,6 +502,21 @@ std::string strip_markup(std::string_view text, CueAlign *align)
 }
 
 // ---- the formats -----------------------------------------------------------------------------
+
+bool add_cue(SubtitleTrack &track, double start, double end, std::string_view raw_text,
+             CueAlign align)
+{
+    Cue cue;
+    cue.align = align;
+    cue.text = strip_markup(raw_text, &cue.align);
+    limit_text(cue.text);
+    if (cue.text.empty() || !(end > start) || start < 0.0)
+        return false;
+    cue.start = start;
+    cue.end = end;
+    return track.add(std::move(cue));
+}
+
 
 SubtitleTrack parse_srt(std::string_view utf8)
 {

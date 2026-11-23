@@ -124,6 +124,26 @@ TEST(PlaybackEngine, BigPicturesAreQueuedWithinTheMemoryBudget)
     EXPECT_EQ(roomy->stats().pictures_ready, EngineOptions{}.picture_queue);
 }
 
+TEST(PlaybackEngine, ConvertingOnSeveralThreadsGivesTheSamePictures)
+{
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    auto alone = open_engine(bytes, &error);
+    ASSERT_TRUE(alone) << error;
+    EngineOptions options;
+    options.convert_threads = 3;
+    auto shared = open_engine(bytes, &error, options);
+    ASSERT_TRUE(shared) << error;
+    run_to_idle(*alone);
+    run_to_idle(*shared);
+    VideoPicture a;
+    VideoPicture b;
+    ASSERT_TRUE(alone->take_picture(0.0, a));
+    ASSERT_TRUE(shared->take_picture(0.0, b));
+    EXPECT_EQ(a.width, b.width);
+    EXPECT_EQ(a.rgba, b.rgba);
+}
+
 TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
 {
     const auto bytes = read_all("h264-aac.mp4");

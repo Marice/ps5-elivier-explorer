@@ -49,6 +49,11 @@ struct EngineOptions
     // heap is 128 MiB and a film needs its decoder and packets too (docs/decision-log.md, D54).
     std::size_t picture_budget_bytes = 56u * 1024u * 1024u;
     double audio_queue_seconds = 2.0;  // decoded sound kept ready
+    // Threads a picture's conversion is split over, the engine's own included (ConvertPool). A
+    // 4K picture takes about 40 ms on one console core (D53, measured at 1080p).
+    int convert_threads = 1;
+    // Packets read ahead and not yet decoded. A 4K film's bitrate wants more than a 1080p one's.
+    std::size_t max_buffered_bytes = 16u * 1024u * 1024u;
 };
 
 class PlaybackEngine

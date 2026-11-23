@@ -12,6 +12,7 @@ extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
 
 #include "video/audio_decoder.hpp"
 #include "video/av_sync.hpp"
+#include "video/convert_pool.hpp"
 #include "video/subtitle_decoder.hpp"
 #include "video/video_decoder.hpp"
 
@@ -38,7 +39,6 @@ namespace
 constexpr int kKeep = -2; // a track request that was not made
 // Compressed packets read ahead of the decoders, in bytes. Reading must not wait for the picture
 // queue: a file keeps its sound a second or more behind its pictures, and the clock is the sound.
-constexpr std::size_t kMaxBufferedBytes = 16u * 1024u * 1024u;
 
 // A request to leave a track as it is is kKeep; -1 is "none".
 bool is_requested(int stream)
@@ -59,6 +59,7 @@ struct PlaybackEngine::Impl
     std::unique_ptr<AudioDecoder> audio;
     std::unique_ptr<SubtitleDecoder> subtitle;
     ConvertTables tables;
+    std::unique_ptr<ConvertPool> converter; // made at open, with options.convert_threads
     std::unique_ptr<VideoPicture> held_picture; // converted, waiting for room in the queue
     int picture_limit = 0; // pictures the engine may hold in all, from the budget; 0 = not known yet
     AudioChunk held_chunk;
@@ -305,7 +306,7 @@ struct PlaybackEngine::Impl
         picture->height = frame.height;
         picture->pts = frame.pts;
         picture->rgba.resize(static_cast<std::size_t>(frame.width) * frame.height * 4);
-        if (!convert_to_rgba16(frame, tables, picture->rgba.data(),
+        if (!converter->convert_rgba16(frame, tables, picture->rgba.data(),
                                static_cast<std::size_t>(frame.width) * 8))
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -516,7 +517,7 @@ struct PlaybackEngine::Impl
             return true;
         if (!demux_ended)
         {
-            if (buffered_bytes < kMaxBufferedBytes)
+            if (buffered_bytes < options.max_buffered_bytes)
                 return read_packet();
             return worked;
         }
@@ -675,6 +676,7 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
 {
     auto impl = std::make_unique<Impl>();
     impl->options = options;
+    impl->converter = std::make_unique<ConvertPool>(options.convert_threads);
     std::string reason;
     impl->demuxer = Demuxer::open(std::move(reader), size, &reason);
     if (!impl->demuxer)

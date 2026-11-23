@@ -122,10 +122,18 @@ VideoViewer::VideoViewer(std::string name, hui::explorer::Source *source, std::s
         hui::explorer::trace("film: heap %zu MiB of %s memory", capacity >> 20,
                              direct != 0 ? "direct" : "flexible");
     }
-    // With the 1 GiB heap a 1080p film may keep its full queue of pictures; with the old 128 MiB
-    // the engine's default budget keeps it short enough to fit (docs/decision-log.md, D54).
+    // With the 1 GiB heap (D54) films up to 4K are decoded: a 4K picture at 16 bits a channel is
+    // 66 MB, so the budget holds three of them, the conversion is split over four threads and
+    // the decoder gets six (assumptions to tune on the console, D59). The old 128 MiB heap keeps
+    // the 1080p limits and the engine's default budget, which fit it.
     if (hui_heap_capacity == nullptr || hui_heap_capacity(nullptr) >= (512u << 20))
-        options.picture_budget_bytes = 160u << 20;
+    {
+        options.limits.max_pixels = 3840 * 2176;
+        options.limits.max_threads = 6;
+        options.picture_budget_bytes = 240u << 20;
+        options.convert_threads = 4;
+        options.max_buffered_bytes = 32u << 20;
+    }
     engine_ = hui::video::PlaybackEngine::open(reader, entry.size, options,
                                                &reason);
     if (!engine_)

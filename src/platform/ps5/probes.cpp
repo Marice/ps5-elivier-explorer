@@ -8,6 +8,7 @@
 #include "platform/ps5/system.hpp"
 #include "video/colour.hpp"
 #include "video/convert.hpp"
+#include "video/convert_pool.hpp"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -312,13 +313,16 @@ struct ConvertCase
     int height;
     int bit_depth;
     bool hdr;
+    int threads; // bands the conversion is split over (ConvertPool), the caller's included
 };
 
 constexpr ConvertCase kConvertCases[] = {
-    {"sdr8_1080p", 1920, 1080, 8, false},
-    {"sdr10_1080p", 1920, 1080, 10, false},
-    {"pq10_1080p", 1920, 1080, 10, true},
-    {"sdr8_720p", 1280, 720, 8, false},
+    {"sdr8_1080p", 1920, 1080, 8, false, 1},
+    {"pq10_1080p", 1920, 1080, 10, true, 1},
+    {"pq10_1080p_t4", 1920, 1080, 10, true, 4},
+    {"sdr10_4k_t4", 3840, 2160, 10, false, 4},
+    {"pq10_4k_t4", 3840, 2160, 10, true, 4},
+    {"pq10_4k_t6", 3840, 2160, 10, true, 6},
 };
 
 // What the video viewer does for every picture (docs/decision-log.md, D51 and D52): YCbCr 4:2:0 to
@@ -371,6 +375,7 @@ void probe_convert(Report &report)
 
         std::vector<std::uint16_t> rgba(static_cast<std::size_t>(item.width) * item.height * 4);
         video::ConvertTables tables;
+        video::ConvertPool pool(item.threads);
         GLuint texture = 0;
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -385,7 +390,7 @@ void probe_convert(Report &report)
         for (int i = 0; i < kWarmup + kRepeats && ok; ++i)
         {
             const std::int64_t begin = sys::monotonic_us();
-            ok = video::convert_to_rgba16(frame, tables, rgba.data(),
+            ok = pool.convert_rgba16(frame, tables, rgba.data(),
                                           static_cast<std::size_t>(item.width) * 8);
             const std::int64_t converted = sys::monotonic_us();
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, item.width, item.height, GL_RGBA,

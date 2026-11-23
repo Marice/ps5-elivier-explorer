@@ -125,11 +125,36 @@ def needs_upload(remote_size, local_size):
     return remote_size != local_size
 
 
+def install_package(console, package, remote):
+    """Sends the files of the package that differ from what the console has.
+
+    Returns (files checked, files sent). The executable and the metadata go last: the title is
+    complete when they land.
+    """
+    files = sorted(p for p in package.rglob("*") if p.is_file())
+    files.sort(key=lambda p: (p.name in ("eboot.bin", "param.json"), str(p)))
+    listings = {}
+    sent = 0
+    for path in files:
+        relative = path.relative_to(package).as_posix()
+        data = path.read_bytes()
+        directory, file_name = f"{remote}/{relative}".rsplit("/", 1)
+        if directory not in listings:
+            listings[directory] = console.sizes(directory) or {}
+        if not needs_upload(listings[directory].get(file_name), len(data)):
+            continue
+        console.upload(f"{remote}/{relative}", data)
+        sent += 1
+    return len(files), sent
+
+
 def wants_manual_launch(environ):
     return environ.get("PS5_MANUAL_LAUNCH") == "1"
 
 
 def request_line(name, token):
+    if not valid_probe_name(name):
+        raise ValueError(f"not a probe name: {name!r}")
     return f"probe {name} {token}\n"
 
 
@@ -184,22 +209,8 @@ def main():
 
     remote = f"/data/homebrew/{title}"
     first_install = console.names(remote) is None
-    files = sorted(p for p in package.rglob("*") if p.is_file())
-    # The executable and the metadata go last: the title is complete when they land.
-    files.sort(key=lambda p: (p.name in ("eboot.bin", "param.json"), str(p)))
-    uploaded = 0
-    listings = {}
-    for path in files:
-        relative = path.relative_to(package).as_posix()
-        data = path.read_bytes()
-        directory, name = f"{remote}/{relative}".rsplit("/", 1)
-        if directory not in listings:
-            listings[directory] = console.sizes(directory) or {}
-        if not needs_upload(listings[directory].get(name), len(data)):
-            continue
-        console.upload(f"{remote}/{relative}", data)
-        uploaded += 1
-    tour.say(f"Installed {title}: {len(files)} files checked by size, {uploaded} uploaded")
+    checked, uploaded = install_package(console, package, remote)
+    tour.say(f"Installed {title}: {checked} files checked by size, {uploaded} uploaded")
 
     # The request goes into the install folder (the app reads it as /app0/dev/request.txt).
     token = str(int(time.time()))

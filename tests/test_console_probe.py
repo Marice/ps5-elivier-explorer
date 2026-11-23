@@ -7,6 +7,7 @@
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,43 @@ class ConsoleProbeTests(unittest.TestCase):
         console.make_dirs("/data/homebrew/TITLE/assets")
         made = [path for verb, path in console.ftp.calls if verb == "MKD"]
         self.assertEqual(made, ["/data/homebrew/TITLE", "/data/homebrew/TITLE/assets"])
+
+    def test_a_request_for_a_name_the_app_would_refuse_is_never_written(self):
+        for bad in ("param.json", "", "MEMORY", "a b"):
+            with self.assertRaises(ValueError):
+                probe.request_line(bad, "1")
+
+    def test_install_sends_what_differs_with_the_executable_and_metadata_last(self):
+        class FakeConsole:
+            def __init__(self, listing):
+                self.listing = listing
+                self.sent = []
+
+            def sizes(self, directory):
+                return self.listing.get(directory)
+
+            def upload(self, path, data):
+                self.sent.append(path)
+
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            (package / "assets").mkdir()
+            (package / "assets/big_same.bin").write_bytes(b"x" * (2 * 1024 * 1024))
+            (package / "assets/big_changed.bin").write_bytes(b"x" * (2 * 1024 * 1024))
+            (package / "assets/small.txt").write_bytes(b"hello")
+            (package / "eboot.bin").write_bytes(b"e" * 10)
+            (package / "param.json").write_bytes(b"{}")
+            remote = "/data/homebrew/T"
+            console = FakeConsole({
+                f"{remote}/assets": {"big_same.bin": 2 * 1024 * 1024,
+                                      "big_changed.bin": 1, "small.txt": 5},
+                remote: {"eboot.bin": 10, "param.json": 2},
+            })
+            checked, sent = probe.install_package(console, package, remote)
+        self.assertEqual(checked, 5)
+        self.assertEqual(sent, 5 - 1)  # only the large file of the right size is left alone
+        self.assertNotIn(f"{remote}/assets/big_same.bin", console.sent)
+        self.assertEqual(console.sent[-2:], [f"{remote}/eboot.bin", f"{remote}/param.json"])
 
     def test_what_has_to_be_sent_is_judged_by_size(self):
         big = 5 * 1024 * 1024

@@ -90,6 +90,8 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
                 plan.hdr = HdrMode::hlg10;
             else if (mode == "fp16")
                 plan.hdr = HdrMode::fp16;
+            else if (mode == "videoout")
+                plan.hdr = HdrMode::videoout;
             else
                 return fail(error, "Unknown HDR mode '" + std::string(mode) + "'");
             alone_asked = true;
@@ -134,6 +136,9 @@ std::string describe(const ProbePlan &plan)
         break;
     case HdrMode::fp16:
         add(true, "hdr:fp16");
+        break;
+    case HdrMode::videoout:
+        add(true, "hdr:videoout");
         break;
     case HdrMode::none:
         break;

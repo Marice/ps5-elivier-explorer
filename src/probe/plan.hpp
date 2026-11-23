@@ -23,6 +23,7 @@ enum class HdrMode
     pq10,  // 10-bit surface in the BT.2020 PQ colour space (HDR10)
     hlg10, // 10-bit surface, BT.2020 HLG
     fp16,  // half-float surface, linear scRGB
+    videoout, // the runtime's scanout buffers retyped to HDR10 (D68), test bars packed by hand
 };
 
 struct ProbePlan

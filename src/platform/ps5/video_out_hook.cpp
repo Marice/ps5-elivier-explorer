@@ -24,6 +24,8 @@ void __real_sceVideoOutSetBufferAttribute2(void *attribute, std::uint64_t pixel_
                                            std::uint32_t dcc_control,
                                            std::uint64_t dcc_clear_colour);
 int sceVideoOutGetOutputStatus(int handle, void *status);
+int sceVideoOutSubmitChangeBufferAttribute2(int handle, int set_index, const void *attribute,
+                                            const void *option);
 }
 
 namespace hui::ps5
@@ -69,6 +71,27 @@ bool trace_video_out_status(const char *when)
                     when, static_cast<unsigned>(rc), status.resolution, status.dynamic_range,
                     static_cast<unsigned long long>(status.refresh),
                     static_cast<unsigned long long>(status.flags));
+    return rc == 0;
+}
+
+bool video_out_set_format(std::uint64_t format)
+{
+    const VideoOutState state = video_out_state();
+    if (state.handle < 0 || state.set_index < 0 || !state.attributes_known)
+    {
+        explorer::trace("video out: format 0x%016llx not set: no buffers registered yet",
+                        static_cast<unsigned long long>(format));
+        return false;
+    }
+    // Room for the attribute structure, whatever its exact size (it is filled by the library).
+    alignas(16) std::uint8_t attribute[256] = {};
+    __real_sceVideoOutSetBufferAttribute2(attribute, format, state.tiling, state.width,
+                                          state.height, state.option, state.dcc_control,
+                                          state.dcc_clear_colour);
+    const int rc =
+        sceVideoOutSubmitChangeBufferAttribute2(state.handle, state.set_index, attribute, nullptr);
+    explorer::trace("video out: buffers retyped to 0x%016llx = 0x%08x",
+                    static_cast<unsigned long long>(format), static_cast<unsigned>(rc));
     return rc == 0;
 }
 

@@ -31,8 +31,18 @@ struct VideoOutState
     std::uint64_t dcc_clear_colour = 0;
 };
 
-// A copy of what the hooks saw so far.
+// The pixel formats of the scanout buffers: what the runtime uses (8-bit SDR), and HDR10 (10:10:10:2,
+// BT.2020, PQ), as EVO Player, VLC and MPC for PS5 retype theirs (D68).
+constexpr std::uint64_t kVideoOutFormatSdr = 0x8000000000000000ull;
+constexpr std::uint64_t kVideoOutFormatHdr10 = 0x8100070400000000ull;
+
+// A copy of what the hooks saw so far (the runtime's own calls; set_format() is not counted).
 VideoOutState video_out_state();
+
+// Retypes the runtime's registered buffers to `format`, keeping its tiling, size and other
+// attributes, and submits the change (sceVideoOutSubmitChangeBufferAttribute2). False, and
+// nothing changed, while the runtime has not opened the output and registered its buffers.
+bool video_out_set_format(std::uint64_t format);
 
 // Writes the output's status (resolution, dynamic range, refresh) to the trace. False when no
 // output is open or the call fails.

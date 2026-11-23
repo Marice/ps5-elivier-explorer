@@ -7,6 +7,7 @@
 #include "explorer/trace.hpp"
 #include "platform/ps5/surround_out.hpp"
 #include "platform/ps5/system.hpp"
+#include "platform/ps5/video_out_hook.hpp"
 #include "platform/ps5/videodec2.hpp"
 #include "video/colour.hpp"
 #include "video/convert.hpp"
@@ -1024,8 +1025,136 @@ void draw_bars(const HdrAttempt &attempt, int width, int height, bool hlg)
     glDisable(GL_SCISSOR_TEST);
 }
 
+// ---- HDR through the video output: the runtime's buffers retyped to HDR10 --------------------
+
+// The 10-bit PQ code of a light level (SMPTE ST 2084).
+std::uint32_t pq_code(float nits)
+{
+    const float y = std::pow(std::max(nits, 0.0f) / 10000.0f, 0.1593017578125f);
+    const float v = std::pow((0.8359375f + 18.8515625f * y) / (1.0f + 18.6875f * y), 78.84375f);
+    return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 1023.0f));
+}
+
+// One way the four bytes the GL writes could become the 10:10:10:2 word the display reads: which
+// colour sits in the low ten bits, and in which order the GL's channels land in memory.
+struct Packing
+{
+    const char *name;
+    bool red_low;  // R in bits 0-9 (B in 20-29), or the other way round
+    bool gl_bgra;  // the GL's red lands in byte 2 (a BGRA surface), or in byte 0
+};
+
+constexpr Packing kPackings[] = {
+    {"1: red low, RGBA bytes", true, false},
+    {"2: red low, BGRA bytes", true, true},
+    {"3: blue low, RGBA bytes", false, false},
+    {"4: blue low, BGRA bytes", false, true},
+};
+
+// Fills a rectangle with the 10:10:10:2 word for PQ codes r, g, b, through glClear so that the
+// bytes arrive exactly (no blending, no shader).
+void fill_packed(const Packing &packing, int x, int y, int w, int h, std::uint32_t r,
+                 std::uint32_t g, std::uint32_t b)
+{
+    const std::uint32_t low = packing.red_low ? r : b;
+    const std::uint32_t high = packing.red_low ? b : r;
+    const std::uint32_t word = (3u << 30) | (high << 20) | (g << 10) | low;
+    const float byte[4] = {static_cast<float>(word & 0xFF), static_cast<float>((word >> 8) & 0xFF),
+                           static_cast<float>((word >> 16) & 0xFF),
+                           static_cast<float>(word >> 24)};
+    const float red = packing.gl_bgra ? byte[2] : byte[0];
+    const float blue = packing.gl_bgra ? byte[0] : byte[2];
+    glScissor(x, y, w, h);
+    glClearColor(red / 255.0f, byte[1] / 255.0f, blue / 255.0f, byte[3] / 255.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+// What a person looks at, per packing (5 s each): white squares top left count the packing;
+// eight grey bars from 0 to 4000 nits; red, green, blue and white patches at 203 nits.
+void draw_packed_bars(const Packing &packing, int index, int width, int height)
+{
+    glDisable(GL_BLEND);
+    glDisable(GL_DITHER);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glEnable(GL_SCISSOR_TEST);
+    fill_packed(packing, 0, 0, width, height, 0, 0, 0);
+    const std::uint32_t white = pq_code(203.0f);
+    const int square = height / 12;
+    for (int i = 0; i <= index; ++i)
+        fill_packed(packing, square / 2 + i * square * 3 / 2, height - square * 3 / 2, square,
+                    square, white, white, white);
+    const int bar = width / 8;
+    for (int i = 0; i < 8; ++i)
+    {
+        const std::uint32_t code = pq_code(kNits[i]);
+        fill_packed(packing, i * bar, height / 2, bar, height / 3, code, code, code);
+    }
+    const int patch = width / 4;
+    fill_packed(packing, 0, height / 12, patch, height / 4, white, 0, 0);
+    fill_packed(packing, patch, height / 12, patch, height / 4, 0, white, 0);
+    fill_packed(packing, 2 * patch, height / 12, patch, height / 4, 0, 0, white);
+    fill_packed(packing, 3 * patch, height / 12, patch, height / 4, white, white, white);
+    glDisable(GL_SCISSOR_TEST);
+}
+
+void probe_hdr_videoout(Display &display, Report &report)
+{
+    // The runtime opens the output at the first swap: show a few plain frames first.
+    for (int i = 0; i < 10; ++i)
+    {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        display.swap();
+    }
+    const VideoOutState state = video_out_state();
+    report.add("hdr", "videoout_handle", static_cast<std::int64_t>(state.handle));
+    report.add_hex("hdr", "runtime_format_high",
+                   static_cast<std::uint32_t>(state.pixel_format >> 32));
+    report.add("hdr", "runtime_tiling", static_cast<std::int64_t>(state.tiling));
+    trace_video_out_status("before HDR");
+    step("hdr videoout: retyping the buffers to HDR10");
+    if (!video_out_set_format(kVideoOutFormatHdr10))
+    {
+        report.note("hdr", "the buffers could not be retyped; HDR stays tone-mapped");
+        return;
+    }
+    for (int index = 0; index < 4; ++index)
+    {
+        const Packing &packing = kPackings[index];
+        step("hdr videoout: packing %s", packing.name);
+        for (int frame = 0; frame < 60 * 5; ++frame)
+        {
+            draw_packed_bars(packing, index, display.width(), display.height());
+            if (!display.swap())
+            {
+                report.note("hdr", "swap failed while the bars were shown");
+                break;
+            }
+            if (index == 0 && frame == 60)
+                trace_video_out_status("in HDR");
+        }
+    }
+    step("hdr videoout: back to the runtime's format");
+    video_out_set_format(state.pixel_format != 0 ? state.pixel_format : kVideoOutFormatSdr);
+    for (int i = 0; i < 30; ++i)
+    {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        display.swap();
+    }
+    trace_video_out_status("after HDR");
+    report.note("hdr", "four packings shown for 5 s each; which one had red, green and blue "
+                       "patches right and grey bars growing brighter, with the TV in HDR?");
+}
+
 void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
 {
+    if (mode == probe::HdrMode::videoout)
+    {
+        report.add("hdr", "attempt", "videoout");
+        probe_hdr_videoout(display, report);
+        return;
+    }
     HdrAttempt attempt{};
     bool hlg = false;
     switch (mode)
@@ -1044,6 +1173,7 @@ void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
                    EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT, true};
         break;
     case probe::HdrMode::none:
+    case probe::HdrMode::videoout:
         return;
     }
     report.add("hdr", "attempt", attempt.name);

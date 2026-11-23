@@ -87,6 +87,17 @@ TEST(ProbePlan, SpeakersPlaysATonePerChannelAndIsAskedForByName)
     EXPECT_FALSE(plan.speakers);
 }
 
+TEST(ProbePlan, HdrThroughTheVideoOutputIsAnHdrModeOfItsOwn)
+{
+    ProbePlan plan;
+    std::string error;
+    ASSERT_TRUE(parse_probe_plan("hdr:videoout", plan, &error)) << error;
+    EXPECT_EQ(plan.hdr, HdrMode::videoout);
+    EXPECT_EQ(describe(plan), "hdr:videoout");
+    plan = ProbePlan{};
+    EXPECT_FALSE(parse_probe_plan("hdr:videoout+memory", plan, &error));
+}
+
 TEST(ProbePlan, AnHdrAttemptRunsAloneBecauseItEndsTheLaunch)
 {
     ProbePlan plan;

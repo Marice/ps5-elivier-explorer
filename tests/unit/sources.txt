@@ -35,6 +35,8 @@ src/video/demuxer.cpp
 src/video/subtitle_text.cpp
 src/video/utc_time.cpp
 src/viewer/*.cpp
+src/probe/plan.cpp
+src/probe/report.cpp
 src/third_party/bc7decomp/bc7.cpp
 src/third_party/stb/image.c
 src/third_party/stb/vorbis.c

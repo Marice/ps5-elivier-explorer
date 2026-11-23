@@ -29,6 +29,12 @@ class ConsoleProbeTests(unittest.TestCase):
         self.assertEqual(probe.request_line("memory+upload", "1700000000"),
                          "probe memory+upload 1700000000\n")
 
+    def test_a_manual_launch_is_only_asked_for_with_the_switch_on(self):
+        self.assertTrue(probe.wants_manual_launch({"PS5_MANUAL_LAUNCH": "1"}))
+        self.assertFalse(probe.wants_manual_launch({}))
+        self.assertFalse(probe.wants_manual_launch({"PS5_MANUAL_LAUNCH": "0"}))
+        self.assertFalse(probe.wants_manual_launch({"PS5_MANUAL_LAUNCH": "yes"}))
+
     def test_a_clean_run_has_no_problems(self):
         log = "[HUI] probe run requested: safe\n[HUI] probe memory t12_16mib_allocate=0x80020012\n" \
               "[HUI] probe run finished lines=12\n"

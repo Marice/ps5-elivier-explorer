@@ -19,6 +19,12 @@ itself; remove the request. It never kills the app and never retries. Read
 docs/CONSOLE_VALIDATION.md first, and ask the console's owner before each run.
 
 Environment: as console-tour.py, and PROBE_TIMEOUT (seconds to wait for the report, default 300).
+
+PS5_MANUAL_LAUNCH=1 leaves the launch to a person: the script uploads, writes the request, waits
+for the title's registration and then asks you to start the title from the home screen (LAUNCH_TIMEOUT
+seconds to do so, default 300). It needs neither the ELF loader nor the launch helper, and nothing
+but the title itself runs on the console. Use it for a title whose ID is not PPSA plus five digits,
+which the helper refuses.
 """
 
 import hashlib
@@ -45,6 +51,10 @@ BAD_PROBE_LOG_WORDS = ("fatal", "assertion")
 def valid_probe_name(name):
     """The shape the app accepts; it checks the words itself and reports a refusal."""
     return re.fullmatch(r"[a-z0-9:+-]{1,64}", name) is not None
+
+
+def wants_manual_launch(environ):
+    return environ.get("PS5_MANUAL_LAUNCH") == "1"
 
 
 def request_line(name, token):
@@ -77,6 +87,8 @@ def main():
     elf_port = int(os.environ.get("ELF_PORT", "9021"))
     timeout = int(os.environ.get("PROBE_TIMEOUT", "300"))
     register_wait = int(os.environ.get("REGISTER_TIMEOUT", "120"))
+    manual = wants_manual_launch(os.environ)
+    launch_wait = int(os.environ.get("LAUNCH_TIMEOUT", "300")) if manual else 90
     protocol = Path(os.environ.get("PS5_PROTOCOL", ROOT.parent / "ps5-homebrew-dev-protocol"))
     sdk = os.environ.get("PS5_PAYLOAD_SDK", str(ROOT / ".deps/native/ps5-payload-sdk"))
     sender = protocol / "scripts/send-controller.sh"
@@ -84,12 +96,12 @@ def main():
     package = ROOT / "dist" / title
     if not (package / "eboot.bin").is_file():
         tour.stop(f"{package} is not built (run make)")
-    if not sender.is_file():
-        tour.stop(f"launch helper not found: {sender} (set PS5_PROTOCOL)")
+    if not manual and not sender.is_file():
+        tour.stop(f"launch helper not found: {sender} (set PS5_PROTOCOL, or PS5_MANUAL_LAUNCH=1)")
     results.mkdir(parents=True, exist_ok=True)
 
     tour.say(f"Checking the console's services at {host}")
-    if not tour.port_open(host, ftp_port) or not tour.port_open(host, elf_port):
+    if not tour.port_open(host, ftp_port) or (not manual and not tour.port_open(host, elf_port)):
         tour.stop("FTP or the ELF loader does not answer")
     console = tour.Console(host, ftp_port)
     active = tour.running_titles(console)
@@ -148,14 +160,18 @@ def main():
 
     if name.startswith("hdr:"):
         tour.say("This is an HDR attempt: watch the TV for the bars and any HDR badge")
-    tour.say(f"Launching {title} with probe '{name}'")
     started = time.time()
-    launch = subprocess.run(["bash", str(sender), "launch", title, host, str(elf_port)],
-                            env={**os.environ, "PS5_PAYLOAD_SDK": sdk}, capture_output=True,
-                            text=True, check=False)
-    if launch.returncode != 0:
-        done.set()
-        tour.stop(f"the launch helper failed: {launch.stderr.strip() or launch.stdout.strip()}")
+    if manual:
+        tour.say(f"NOW: start {title} (EliVier Explorer) from the console's home screen "
+                 f"(waiting up to {launch_wait} s for probe '{name}')")
+    else:
+        tour.say(f"Launching {title} with probe '{name}'")
+        launch = subprocess.run(["bash", str(sender), "launch", title, host, str(elf_port)],
+                                env={**os.environ, "PS5_PAYLOAD_SDK": sdk}, capture_output=True,
+                                text=True, check=False)
+        if launch.returncode != 0:
+            done.set()
+            tour.stop(f"the launch helper failed: {launch.stderr.strip() or launch.stdout.strip()}")
 
     dev = f"/mnt/sandbox/{title}_000/download0/hui/dev"
     report_path = f"{dev}/probe/report.txt"
@@ -168,7 +184,7 @@ def main():
             tour.stop("the console stopped answering during the run; do not retry, look at klog.txt")
 
     taken = False
-    while time.time() - started < 90:
+    while time.time() - started < launch_wait:
         time.sleep(3)
         console = connect()
         taken = (console.read(f"{dev}/handled.txt") or b"").decode().strip() == token
@@ -238,7 +254,8 @@ def main():
                            title)
     if not closed:
         problems.append("the app did not close after its evidence window")
-    if not all(tour.port_open(host, port) for port in (ftp_port, elf_port)):
+    services = (ftp_port,) if manual else (ftp_port, elf_port)
+    if not all(tour.port_open(host, port) for port in services):
         problems.append("the console's services do not all answer after the run")
     print((results / "report.txt").read_text().strip())
     if problems:

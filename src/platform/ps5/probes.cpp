@@ -4,6 +4,7 @@
 
 #include "platform/ps5/probes.hpp"
 
+#include "explorer/trace.hpp"
 #include "platform/ps5/system.hpp"
 #include "video/colour.hpp"
 
@@ -11,6 +12,7 @@
 #include <EGL/eglext.h>
 #include <GL/glcorearb.h>
 
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -57,7 +59,8 @@ double seconds_between(std::int64_t from_us, std::int64_t to_us)
     return static_cast<double>(to_us - from_us) / 1e6;
 }
 
-// Writes the report lines that were not logged yet to the app log, so a crash keeps them.
+// Writes the report lines that were not logged yet to the app log and the trace, so a crash keeps
+// them.
 class LogFollower
 {
   public:
@@ -67,13 +70,34 @@ class LogFollower
     void flush()
     {
         for (; logged_ < report_.lines().size(); ++logged_)
+        {
             sys::log("[HUI] %s", report_.lines()[logged_].c_str());
+            explorer::trace("%s", report_.lines()[logged_].c_str());
+        }
     }
 
   private:
     const Report &report_;
     std::size_t logged_ = 0;
 };
+
+LogFollower *g_follower = nullptr; // set while run_probes() runs
+
+// What is about to be tried, written before the call: to the log and to the trace file, which
+// is synced per line and read over FTP after the app has closed. A step that takes the app down
+// leaves its line as the last one, and the answers found before it are written first.
+__attribute__((format(printf, 1, 2))) void step(const char *format, ...)
+{
+    if (g_follower != nullptr)
+        g_follower->flush();
+    char text[200];
+    va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(text, sizeof(text), format, arguments);
+    va_end(arguments);
+    sys::log("[HUI] probe step: %s", text);
+    explorer::trace("probe step: %s", text);
+}
 
 // ---- memory ----------------------------------------------------------------------------------
 
@@ -87,6 +111,7 @@ void probe_memory_type(Report &report, int type, std::size_t max_bytes, int64_t 
     std::size_t best = 0;
     for (const std::size_t size : probe::allocation_ladder(max_bytes))
     {
+        step("memory type %d: %zu MiB", type, size / kMiB);
         const std::string label = name + "_" + std::to_string(size / kMiB) + "mib";
         int64_t start = -1;
         int rc = sceKernelAllocateDirectMemory(0, limit, size, 0x4000, type, &start);
@@ -131,6 +156,7 @@ void probe_memory_type(Report &report, int type, std::size_t max_bytes, int64_t 
 
 void probe_memory(Report &report)
 {
+    step("memory: sizes of direct and flexible memory");
     const std::int64_t limit = sceKernelGetDirectMemorySize();
     report.add("memory", "direct_total_mib", limit / static_cast<std::int64_t>(kMiB));
     std::size_t available = 0;
@@ -214,6 +240,8 @@ void upload_plane(GLuint texture, const PlaneShape &plane, const void *data)
 void time_method(Report &report, const FrameShape &frame, GLuint luma, GLuint chroma,
                  const unsigned char *source, bool through_buffer, GLuint buffer)
 {
+    step("upload %s %s: %d uploads", frame.name, through_buffer ? "through a buffer" : "direct",
+         kWarmup + kRepeats);
     probe::TimingStats calls;
     probe::TimingStats total;
     const std::size_t all_bytes = frame.luma.bytes + frame.chroma.bytes;
@@ -279,6 +307,7 @@ void probe_upload(Report &report)
                                       " skipped: too little app heap for a source frame");
             continue;
         }
+        step("upload %s: source frame of %zu KiB", frame.name, all_bytes / 1024);
         auto *source = static_cast<unsigned char *>(std::malloc(all_bytes));
         if (source == nullptr)
         {
@@ -359,6 +388,7 @@ bool has_word(const char *words, const char *word)
 
 void probe_egl(Report &report)
 {
+    step("egl: extensions and configs");
     EGLDisplay display = eglGetCurrentDisplay();
     if (display == EGL_NO_DISPLAY)
     {
@@ -450,6 +480,7 @@ void probe_decoder_load(Report &report)
         "sceVideodec2Flush"};
 
     // 207 is SCE_SYSMODULE_VIDEODEC2 in EVO Player's header; its code ignores the result.
+    step("decoder-load: sceSysmoduleLoadModule(207)");
     const int sysmodule = sceSysmoduleLoadModule(207);
     report.add_hex("decoder-load", "sysmodule_207_rc", static_cast<std::uint32_t>(sysmodule));
 
@@ -459,12 +490,15 @@ void probe_decoder_load(Report &report)
     for (const char *path : kPaths)
     {
         int result = 0;
+        step("decoder-load: sceKernelLoadStartModule(%s)", path);
         const int handle = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &result);
         const std::string key = std::string("module_") + path;
         report.add("decoder-load", key + "_handle_or_rc", static_cast<std::int64_t>(handle));
         if (handle <= 0)
             continue;
         int found = 0;
+        step("decoder-load: looking up %zu functions in module %d",
+             sizeof(kFunctions) / sizeof(kFunctions[0]), handle);
         for (const char *name : kFunctions)
         {
             void *address = nullptr;
@@ -544,7 +578,9 @@ void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
     report.add("hdr", "attempt", attempt.name);
 
     // The display goes down and comes up with the surface that was asked for.
+    step("hdr %s: closing the display", attempt.name);
     display.close();
+    step("hdr %s: opening the surface", attempt.name);
     const bool opened = display.open(1920, 1080, attempt.request);
     report.add("hdr", "open", opened ? "yes" : "no");
     report.add("hdr", "egl_error", std::string(egl_error_name(display.last_error())));
@@ -561,6 +597,7 @@ void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
 
     // Hold the bars so that a person can look at the TV: does it switch to HDR, and are the steps
     // above paper white brighter, one after the other? The probe cannot see the TV.
+    step("hdr %s: showing the bars", attempt.name);
     constexpr int kHoldFrames = 60 * 12;
     for (int frame = 0; frame < kHoldFrames; ++frame)
     {
@@ -581,6 +618,8 @@ void probe_hdr(probe::HdrMode mode, Display &display, Report &report)
 void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &report)
 {
     LogFollower log(report);
+    g_follower = &log;
+    step("run: plan %s", probe::describe(plan).c_str());
     report.add("run", "plan", probe::describe(plan));
     report.add("run", "display",
                std::to_string(display.width()) + "x" + std::to_string(display.height()));
@@ -610,6 +649,7 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
         probe_hdr(plan.hdr, display, report);
         log.flush();
     }
+    g_follower = nullptr;
 }
 
 } // namespace hui::ps5

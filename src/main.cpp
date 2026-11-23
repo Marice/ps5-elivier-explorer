@@ -199,6 +199,7 @@ void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::st
     std::string error;
     save::ensure_directory(std::string(kDevRoot) + "/probe");
     sys::log("[HUI] probe run requested: %s", name.c_str());
+    explorer::trace("probe launch: request '%s'", name.c_str());
     report.add("run", "request", name);
     if (probe::parse_probe_plan(name, plan, &error))
     {
@@ -210,7 +211,14 @@ void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::st
         sys::log("[HUI] probe refused: %s", error.c_str());
     }
     save::write_atomic(std::string(kDevRoot) + "/probe/report.txt", report.text());
+    // A copy beside the trace, where a PC can still read it after the app has closed.
+    const std::string trace_file = explorer::trace_path();
+    const std::size_t slash = trace_file.rfind('/');
+    if (slash != std::string::npos)
+        save::write_atomic(trace_file.substr(0, slash) + "/probe-report.txt", report.text());
     sys::log("[HUI] probe run finished lines=%zu", report.lines().size());
+    explorer::trace("probe run finished: %zu lines; waiting %.0f s to be collected",
+                    report.lines().size(), kProbeCollectSeconds);
 
     // An HDR attempt leaves the display closed; a plain one is enough for the wait.
     if (display.width() == 0 && !open_display(display, resolution))
@@ -239,6 +247,7 @@ void run_probe_launch(hui::ps5::Display &display, int *resolution, const std::st
             sys::log("[HUI] closing: probe %s", waited > kProbeCollectSeconds
                                                     ? "evidence window over"
                                                     : "quit requested");
+            explorer::trace("probe launch: closing");
             sys::quit();
         }
     }

@@ -7,6 +7,7 @@
 
 #include "audio/mixer.hpp"
 #include "explorer/local_source.hpp"
+#include "explorer/trace.hpp"
 #include "viewer/registry.hpp"
 #include "viewer/video_viewer.hpp"
 
@@ -15,6 +16,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -93,6 +96,34 @@ class VideoViewerTest : public ConceptFixture
     hui::explorer::LocalSource source_;
     hui::audio::Mixer mixer_;
 };
+
+TEST_F(VideoViewerTest, WritesOneLineASecondToTheTraceWhilePlaying)
+{
+    char folder[] = "/tmp/hui-trace-XXXXXX";
+    ASSERT_NE(mkdtemp(folder), nullptr);
+    const char *folders[] = {folder};
+    ASSERT_TRUE(hui::explorer::trace_open(folders));
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    const auto read_trace = [] {
+        std::string text;
+        if (std::FILE *file = std::fopen(hui::explorer::trace_path(), "rb"))
+        {
+            char buffer[512];
+            std::size_t got = 0;
+            while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
+                text.append(buffer, got);
+            std::fclose(file);
+        }
+        return text;
+    };
+    EXPECT_TRUE(run_until(*viewer, [&] { return read_trace().find("video t=") != std::string::npos; }));
+    const std::string text = read_trace();
+    EXPECT_NE(text.find("shown="), std::string::npos);
+    EXPECT_NE(text.find("late="), std::string::npos);
+    EXPECT_NE(text.find("starved="), std::string::npos);
+}
 
 TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)
 {

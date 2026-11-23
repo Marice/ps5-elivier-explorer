@@ -5,6 +5,7 @@
 
 #include "audio/mixer.hpp"
 #include "explorer/source.hpp"
+#include "explorer/trace.hpp"
 #include "viewer/sound_viewer.hpp"
 
 #include <algorithm>
@@ -331,6 +332,24 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback & /*fee
         player_->pump(dt);
     else if (!paused_ && !ended_)
         free_clock_ += static_cast<double>(dt);
+
+    // One line a second while it plays, so a console run shows whether it keeps up (D53): pictures
+    // shown, thrown away late and ready, and times the sound had to wait.
+    if (!paused_ && !ended_)
+    {
+        stats_clock_ += dt;
+        if (stats_clock_ >= 1.0f)
+        {
+            const hui::video::PlaybackEngine::Stats stats = engine_->stats();
+            hui::explorer::trace("video t=%.1f shown=%d late=%d ready=%d starved=%llu",
+                                 position(), pictures_shown_ - stats_shown_,
+                                 stats.pictures_late - stats_late_, stats.pictures_ready,
+                                 static_cast<unsigned long long>(stats.starved_reads));
+            stats_shown_ = pictures_shown_;
+            stats_late_ = stats.pictures_late;
+            stats_clock_ = 0.0f;
+        }
+    }
 
     overlay_ = std::max(0.0f, overlay_ - dt);
     const double now = position();

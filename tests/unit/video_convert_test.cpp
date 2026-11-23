@@ -5,6 +5,7 @@
 #include "video/convert.hpp"
 
 #include "video/colour.hpp"
+#include "video/convert_pool.hpp"
 
 #include <gtest/gtest.h>
 
@@ -365,6 +366,124 @@ TEST(VideoConvert, SixteenBitOutputHonoursItsPitchAndRefusesAShortOne)
     EXPECT_EQ(wide[20 + 3], 65535);   // alpha of the first pixel of row 1
     EXPECT_FALSE(convert_to_rgba16(p.frame(colour), tables, wide.data(), 31));
     EXPECT_FALSE(convert_to_rgba16(p.frame(colour), tables, nullptr, 40));
+}
+
+} // namespace
+
+namespace
+{
+
+// The same picture as NV12 (or its 16-bit form): Cb and Cr interleaved in one plane.
+Frame semi_planar_of(const Picture &p, std::vector<std::uint8_t> &uv, ColourInfo colour)
+{
+    const int bytes = p.bit_depth > 8 ? 2 : 1;
+    const int cw = (p.width + (1 << p.shift_x) - 1) >> p.shift_x;
+    const int ch = (p.height + (1 << p.shift_y) - 1) >> p.shift_y;
+    const int pitch = cw * 2 * bytes + 6; // padded, as a decoder's pitch is
+    uv.assign(static_cast<std::size_t>(pitch) * ch, 0xEE);
+    for (int y = 0; y < ch; ++y)
+        for (int x = 0; x < cw; ++x)
+        {
+            std::memcpy(&uv[static_cast<std::size_t>(y) * pitch + (2 * x) * bytes],
+                        &p.u[static_cast<std::size_t>(y) * p.pitch_c + x * bytes], bytes);
+            std::memcpy(&uv[static_cast<std::size_t>(y) * pitch + (2 * x + 1) * bytes],
+                        &p.v[static_cast<std::size_t>(y) * p.pitch_c + x * bytes], bytes);
+        }
+    Frame f = p.frame(colour);
+    f.planes[1] = uv.data();
+    f.planes[2] = nullptr;
+    f.pitches[1] = pitch;
+    f.pitches[2] = 0;
+    f.plane_count = 2;
+    f.semi_planar = true;
+    return f;
+}
+
+Picture varied(int width, int height, int depth)
+{
+    Picture p = flat(width, height, depth, 1, 1, 0, 0, 0);
+    const int top = depth > 8 ? 1023 : 255;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            put(p.y, p.pitch_y, depth, x, y, (x * 37 + y * 11) % (top + 1));
+    for (int y = 0; y < (height + 1) / 2; ++y)
+        for (int x = 0; x < (width + 1) / 2; ++x)
+        {
+            put(p.u, p.pitch_c, depth, x, y, (x * 13 + y * 29) % (top + 1));
+            put(p.v, p.pitch_c, depth, x, y, (x * 53 + y * 7) % (top + 1));
+        }
+    return p;
+}
+
+TEST(VideoConvert, ASemiPlanarFrameGivesTheSamePixelsAsItsPlanarTwin)
+{
+    for (const int depth : {8, 10})
+    {
+        const Picture p = varied(10, 6, depth);
+        const ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+        std::vector<std::uint8_t> uv;
+        const Frame nv12 = semi_planar_of(p, uv, colour);
+        ConvertTables tables;
+        std::vector<std::uint16_t> planar(10 * 6 * 4);
+        std::vector<std::uint16_t> semi(10 * 6 * 4);
+        ASSERT_TRUE(convert_to_rgba16(p.frame(colour), tables, planar.data(), 10 * 8));
+        ASSERT_TRUE(convert_to_rgba16(nv12, tables, semi.data(), 10 * 8)) << "depth " << depth;
+        EXPECT_EQ(planar, semi) << "depth " << depth;
+    }
+}
+
+TEST(VideoConvert, ASemiPlanarFrameWithAShortChromaPitchIsRefused)
+{
+    const Picture p = varied(10, 6, 8);
+    const ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+    std::vector<std::uint8_t> uv;
+    Frame nv12 = semi_planar_of(p, uv, colour);
+    nv12.pitches[1] = 9; // five chroma pairs need ten bytes
+    ConvertTables tables;
+    std::vector<std::uint16_t> out(10 * 6 * 4);
+    EXPECT_FALSE(convert_to_rgba16(nv12, tables, out.data(), 10 * 8));
+}
+
+TEST(VideoConvert, RowBandsPutTogetherAreThePicture)
+{
+    const Picture p = varied(12, 9, 10);
+    ColourInfo colour = sdr(Matrix::bt2020, Range::limited);
+    colour.transfer = Transfer::pq;
+    ConvertTables whole_tables;
+    std::vector<std::uint16_t> whole(12 * 9 * 4);
+    ASSERT_TRUE(convert_to_rgba16(p.frame(colour), whole_tables, whole.data(), 12 * 8));
+
+    ConvertTables tables;
+    ASSERT_TRUE(prepare_conversion(p.frame(colour), tables, 12 * 8, sizeof(std::uint16_t)));
+    std::vector<std::uint16_t> bands(12 * 9 * 4, 0x5555);
+    convert_rows_rgba16(p.frame(colour), tables, bands.data(), 12 * 8, 0, 4);
+    convert_rows_rgba16(p.frame(colour), tables, bands.data(), 12 * 8, 4, 5);
+    convert_rows_rgba16(p.frame(colour), tables, bands.data(), 12 * 8, 5, 9);
+    EXPECT_EQ(whole, bands);
+}
+
+TEST(VideoConvert, APoolOfThreadsGivesTheSamePictureAsOneThread)
+{
+    const Picture p = varied(64, 37, 8);
+    const ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+    ConvertTables tables;
+    std::vector<std::uint16_t> alone(64 * 37 * 4);
+    ASSERT_TRUE(convert_to_rgba16(p.frame(colour), tables, alone.data(), 64 * 8));
+    for (const int threads : {1, 2, 4})
+    {
+        ConvertPool pool(threads);
+        ConvertTables pool_tables;
+        for (int round = 0; round < 3; ++round) // the workers are reused
+        {
+            std::vector<std::uint16_t> shared(64 * 37 * 4, 0x1111);
+            ASSERT_TRUE(pool.convert_rgba16(p.frame(colour), pool_tables, shared.data(), 64 * 8));
+            EXPECT_EQ(alone, shared) << threads << " threads, round " << round;
+        }
+    }
+    ConvertPool pool(3);
+    ConvertTables pool_tables;
+    std::vector<std::uint16_t> out(64 * 37 * 4);
+    EXPECT_FALSE(pool.convert_rgba16(p.frame(colour), pool_tables, out.data(), 10)); // short pitch
 }
 
 } // namespace

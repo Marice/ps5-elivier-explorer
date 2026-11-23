@@ -30,8 +30,10 @@ struct ConvertTables
 };
 
 // Converts `frame` to RGBA8 (alpha 255) at its own size, rows top to bottom, `out_pitch_bytes`
-// apart. False, and nothing written, when the frame is not planar YCbCr this can read (no planes,
-// semi-planar, a depth outside 8 to 16, a chroma shift above 2, a pitch too small for the width).
+// apart. Reads planar YCbCr (three planes) and semi-planar (NV12, and its 16-bit form with the
+// value in the low bits, as the hardware decoder writes: plane 1 holds Cb and Cr pairs). False,
+// and nothing written, for anything else (missing planes, a depth outside 8 to 16, a chroma
+// shift above 2, a pitch too small for the width).
 // `out_rgba` must hold out_pitch_bytes * height bytes.
 bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *out_rgba,
                      std::size_t out_pitch_bytes);
@@ -41,5 +43,14 @@ bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *ou
 // D52), so a moving picture goes this way. The pitch is in bytes and at least width * 8.
 bool convert_to_rgba16(const Frame &frame, ConvertTables &tables, std::uint16_t *out_rgba,
                        std::size_t out_pitch_bytes);
+
+// For splitting one picture over threads (ConvertPool): prepare_conversion checks the frame
+// and the output (`out_bytes` per channel, 1 or 2) and readies the tables, once, on one
+// thread; then convert_rows_rgba16 may run on several threads at once for rows
+// [first_row, end_row), each band its own, sharing the tables read-only.
+bool prepare_conversion(const Frame &frame, ConvertTables &tables, std::size_t out_pitch_bytes,
+                        std::size_t out_bytes);
+void convert_rows_rgba16(const Frame &frame, const ConvertTables &tables, std::uint16_t *out_rgba,
+                         std::size_t out_pitch_bytes, int first_row, int end_row);
 
 } // namespace hui::video

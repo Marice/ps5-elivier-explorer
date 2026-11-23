@@ -9,6 +9,8 @@
 # has one). Everything is generated from FFmpeg's own test sources: a moving test pattern, a sine
 # tone and a few invented subtitle lines. No third-party material. The clips are 160 x 90 and two
 # seconds long, a few tens of kilobytes each, and are checked in so that the tests need no encoder.
+# The encoders are not bit-reproducible: running this again gives files with other bytes but the
+# same streams. Commit a regenerated clip only when its content has to change.
 
 set -euo pipefail
 
@@ -52,6 +54,10 @@ ffmpeg "${quiet[@]}" -f lavfi -i "$video" -f lavfi -i "$(tone 440)" \
     -c:v libx264 -preset veryfast -crf 36 -pix_fmt yuv420p -g 12 -sc_threshold 0 \
     -c:a aac -b:a 48k -shortest \
     -movflags +faststart "$out/h264-aac.mp4"
+
+# H.264 4:4:4 (High 4:4:4 Predictive): full-resolution chroma, to prove the frame format is general.
+ffmpeg "${quiet[@]}" -f lavfi -i "$video" \
+    -c:v libx264 -preset veryfast -crf 30 -pix_fmt yuv444p "$out/h264-yuv444.mp4"
 
 # HEVC Main10 tagged as HDR10 (BT.2020, PQ) in Matroska with FLAC.
 ffmpeg "${quiet[@]}" -f lavfi -i "$video" -f lavfi -i "$(tone 440)" \

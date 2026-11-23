@@ -299,6 +299,8 @@ void VideoViewer::show_picture()
         textures_->destroy(texture_);
         texture_ = 0;
     }
+    if (pictures_shown_ == 0)
+        hui::explorer::trace("film: first picture taken %dx%d", picture_.width, picture_.height);
     if (texture_ == 0)
     {
         texture_ = textures_->create_streaming(picture_.width, picture_.height);
@@ -310,11 +312,15 @@ void VideoViewer::show_picture()
             return;
         }
     }
+    if (pictures_shown_ == 0)
+        hui::explorer::trace("film: texture %u made, uploading", texture_);
     if (!textures_->update(texture_, picture_.width, picture_.height, picture_.rgba.data()))
     {
         error_ = "The picture cannot be shown";
         return;
     }
+    if (pictures_shown_ == 0)
+        hui::explorer::trace("film: first picture uploaded");
     ++pictures_shown_;
 }
 

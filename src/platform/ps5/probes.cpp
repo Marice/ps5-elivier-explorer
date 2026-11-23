@@ -7,6 +7,7 @@
 #include "explorer/trace.hpp"
 #include "platform/ps5/system.hpp"
 #include "video/colour.hpp"
+#include "video/convert.hpp"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -19,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // The kernel and sysmodule calls, declared as the working EVO Player code declares them (its
 // evo_vdec_native.c); only calls whose signature that code confirms are used. They live in
@@ -299,6 +301,120 @@ void time_method(Report &report, const FrameShape &frame, GLuint luma, GLuint ch
                   calls.average(), calls.percentile(0.95), total.average(), total.percentile(0.95),
                   total.maximum(), total.count());
     report.add("upload", std::string(frame.name) + (through_buffer ? "_buffer" : "_direct"), text);
+}
+
+// ---- convert ---------------------------------------------------------------------------------
+
+struct ConvertCase
+{
+    const char *name;
+    int width;
+    int height;
+    int bit_depth;
+    bool hdr;
+};
+
+constexpr ConvertCase kConvertCases[] = {
+    {"sdr8_1080p", 1920, 1080, 8, false},
+    {"sdr10_1080p", 1920, 1080, 10, false},
+    {"pq10_1080p", 1920, 1080, 10, true},
+    {"sdr8_720p", 1280, 720, 8, false},
+};
+
+// What the video viewer does for every picture (docs/decision-log.md, D51 and D52): YCbCr 4:2:0 to
+// RGBA with 16 bits a channel on the CPU, then glTexSubImage2D. Timed apart and together, since a
+// 24 fps film has 41.7 ms for the two and everything else. Run on one thread, like the engine.
+void probe_convert(Report &report)
+{
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    for (const ConvertCase &item : kConvertCases)
+    {
+        step("convert %s: %d conversions", item.name, kWarmup + kRepeats);
+        const int bytes = item.bit_depth > 8 ? 2 : 1;
+        const int chroma_width = item.width / 2;
+        std::vector<std::uint8_t> luma(static_cast<std::size_t>(item.width) * item.height * bytes);
+        std::vector<std::uint8_t> cb(static_cast<std::size_t>(chroma_width) * item.height / 2 *
+                                     bytes);
+        std::vector<std::uint8_t> cr(cb.size());
+        // A pattern, so that the work is not that of a flat picture; sample values stay valid.
+        for (std::size_t i = 0; i < luma.size(); ++i)
+            luma[i] = static_cast<std::uint8_t>((i * 7u) & 0xffu);
+        if (bytes == 2)
+            for (std::size_t i = 1; i < luma.size(); i += 2)
+                luma[i] &= 0x03;
+        for (std::size_t i = 0; i < cb.size(); ++i)
+        {
+            cb[i] = static_cast<std::uint8_t>((i * 5u) & 0xffu);
+            cr[i] = static_cast<std::uint8_t>((i * 3u) & 0xffu);
+        }
+        if (bytes == 2)
+            for (std::size_t i = 1; i < cb.size(); i += 2)
+            {
+                cb[i] &= 0x03;
+                cr[i] &= 0x03;
+            }
+        video::Frame frame;
+        frame.planes[0] = luma.data();
+        frame.planes[1] = cb.data();
+        frame.planes[2] = cr.data();
+        frame.pitches[0] = item.width * bytes;
+        frame.pitches[1] = chroma_width * bytes;
+        frame.pitches[2] = chroma_width * bytes;
+        frame.plane_count = 3;
+        frame.width = item.width;
+        frame.height = item.height;
+        frame.bit_depth = item.bit_depth;
+        frame.colour.matrix = video::Matrix::bt709;
+        frame.colour.range = video::Range::limited;
+        frame.colour.transfer = item.hdr ? video::Transfer::pq : video::Transfer::sdr;
+
+        std::vector<std::uint16_t> rgba(static_cast<std::size_t>(item.width) * item.height * 4);
+        video::ConvertTables tables;
+        GLuint texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, item.width, item.height, 0, GL_RGBA,
+                     GL_UNSIGNED_SHORT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+
+        probe::TimingStats convert;
+        probe::TimingStats upload;
+        probe::TimingStats both;
+        bool ok = true;
+        for (int i = 0; i < kWarmup + kRepeats && ok; ++i)
+        {
+            const std::int64_t begin = sys::monotonic_us();
+            ok = video::convert_to_rgba16(frame, tables, rgba.data(),
+                                          static_cast<std::size_t>(item.width) * 8);
+            const std::int64_t converted = sys::monotonic_us();
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, item.width, item.height, GL_RGBA,
+                            GL_UNSIGNED_SHORT, rgba.data());
+            glFinish();
+            const std::int64_t done = sys::monotonic_us();
+            if (i >= kWarmup)
+            {
+                convert.add(static_cast<double>(converted - begin) / 1000.0);
+                upload.add(static_cast<double>(done - converted) / 1000.0);
+                both.add(static_cast<double>(done - begin) / 1000.0);
+            }
+        }
+        glDeleteTextures(1, &texture);
+        if (!ok)
+        {
+            report.note("convert", std::string(item.name) + " the conversion refused the frame");
+            continue;
+        }
+        char text[240];
+        std::snprintf(text, sizeof(text),
+                      "convert avg=%.2f p95=%.2f ms; upload avg=%.2f p95=%.2f ms; both avg=%.2f "
+                      "p95=%.2f max=%.2f ms (n=%zu)",
+                      convert.average(), convert.percentile(0.95), upload.average(),
+                      upload.percentile(0.95), both.average(), both.percentile(0.95),
+                      both.maximum(), both.count());
+        report.add("convert", item.name, text);
+        report.add_hex("convert", std::string(item.name) + "_gl_error", glGetError());
+    }
 }
 
 void probe_upload(Report &report)
@@ -700,6 +816,11 @@ void run_probes(const probe::ProbePlan &plan, Display &display, probe::Report &r
     if (plan.upload)
     {
         probe_upload(report);
+        log.flush();
+    }
+    if (plan.convert)
+    {
+        probe_convert(report);
         log.flush();
     }
     if (plan.egl)

@@ -46,6 +46,24 @@ TEST(ProbePlan, SingleProbesAndCombinationsWithAPlus)
     EXPECT_TRUE(plan.egl);
 }
 
+TEST(ProbePlan, ConvertTimesTheCpuConversionAndCombinesWithTheOthers)
+{
+    ProbePlan plan;
+    std::string error;
+    ASSERT_TRUE(parse_probe_plan("convert", plan, &error)) << error;
+    EXPECT_TRUE(plan.convert);
+    EXPECT_FALSE(plan.upload);
+    EXPECT_EQ(describe(plan), "convert");
+
+    plan = ProbePlan{};
+    ASSERT_TRUE(parse_probe_plan("upload+convert", plan, &error)) << error;
+    EXPECT_EQ(describe(plan), "upload+convert");
+
+    plan = ProbePlan{};
+    ASSERT_TRUE(parse_probe_plan("safe", plan, &error));
+    EXPECT_FALSE(plan.convert); // it needs a second of CPU a time: asked for by name only
+}
+
 TEST(ProbePlan, AnHdrAttemptRunsAloneBecauseItEndsTheLaunch)
 {
     ProbePlan plan;

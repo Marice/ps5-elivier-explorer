@@ -51,6 +51,10 @@ bool parse_probe_plan(std::string_view name, ProbePlan &plan, std::string *error
         {
             plan.upload = true;
         }
+        else if (token == "convert")
+        {
+            plan.convert = true;
+        }
         else if (token == "egl")
         {
             plan.egl = true;
@@ -105,6 +109,7 @@ std::string describe(const ProbePlan &plan)
     };
     add(plan.memory, "memory");
     add(plan.upload, "upload");
+    add(plan.convert, "convert");
     add(plan.egl, "egl");
     add(plan.decoder_load, "decoder-load");
     add(plan.decoder_bind, "decoder-bind");

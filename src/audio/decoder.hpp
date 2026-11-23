@@ -35,7 +35,10 @@ class Decoder
     virtual int rate() const = 0;
     // Length in seconds; 0 when it cannot be known.
     virtual double duration() const = 0;
-    // Interleaved stereo (mono is duplicated). Returns the frames written; 0 at the end.
+    // Interleaved stereo (mono is duplicated). Returns the frames written; 0 at the end. A decoder
+    // that is fed by another thread (a film's sound) may return kTryLater when it has nothing yet
+    // and the end has not come: the player asks again next frame, and its clock waits meanwhile.
+    static constexpr int kTryLater = -2;
     virtual int read(float *stereo, int frames) = 0;
     // Jumps to `seconds` (approximate for formats without an index). False when not possible.
     virtual bool seek(double seconds) = 0;

@@ -107,6 +107,8 @@ void AudioPlayer::pump(float dt)
             if (++decodes > kMaxDecodesPerPump)
                 break;
             const int got = decoder_->read(chunk_.data(), kChunk);
+            if (got == Decoder::kTryLater)
+                break; // nothing yet, not the end: nothing is written, so the clock waits
             if (got <= 0)
             {
                 ended_ = true;

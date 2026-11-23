@@ -47,6 +47,9 @@ AudioPlayer::~AudioPlayer()
 
 void AudioPlayer::attach(StreamRing *ring)
 {
+    // A song or film the player opened is as loud as its own volume says, not scaled again by
+    // the background music setting (docs/decision-log.md, D57).
+    mixer_.set_stream_follows_music(kStreamSlot, false);
     mixer_.swap_stream(kStreamSlot, ring);
 }
 

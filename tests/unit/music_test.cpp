@@ -108,6 +108,28 @@ TEST(Mixer, StreamsPlayOnTheMusicBusAndRampGain)
     EXPECT_GT(mixer.stream_underruns(), 0u); // the ring ran dry along the way
 }
 
+TEST(Mixer, AStreamCanLeaveTheMusicFaderForItsOwnVolume)
+{
+    // A film or a song opened in a viewer has its own volume; the music setting is for the
+    // background music (docs/decision-log.md, D57).
+    Mixer mixer;
+    StreamRing ring(8192);
+    mixer.attach_stream(1, &ring);
+    std::vector<float> constant(8192 * 2, 0.5f);
+    ring.write(constant.data(), 8192);
+    mixer.set_bus_gain(Bus::music, 0.16f);
+    mixer.set_stream_follows_music(1, false);
+    mixer.set_stream_gain(1, 1.0f, 0.0f);
+    std::vector<std::int16_t> out(256 * 2);
+    for (int i = 0; i < 4; ++i)
+        mixer.render(out.data(), 256);
+    EXPECT_NEAR(peak(out), 0.5, 0.02);
+    mixer.set_stream_follows_music(1, true);
+    for (int i = 0; i < 12; ++i)
+        mixer.render(out.data(), 256);
+    EXPECT_NEAR(peak(out), 0.5 * 0.16, 0.02);
+}
+
 TEST(MusicPlayer, PlaysEverySongInTurnThenStartsOver)
 {
     Mixer mixer;

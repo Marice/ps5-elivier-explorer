@@ -96,6 +96,17 @@ bool Mixer::set_stream_gain(std::size_t slot, float gain, float seconds)
     return post(command);
 }
 
+bool Mixer::set_stream_follows_music(std::size_t slot, bool follows)
+{
+    if (slot >= kStreams)
+        return false;
+    Command command;
+    command.type = CommandType::stream_follows_music;
+    command.slot = slot;
+    command.value = follows ? 1.0f : 0.0f;
+    return post(command);
+}
+
 bool Mixer::swap_stream(std::size_t slot, StreamRing *ring)
 {
     if (slot >= kStreams)
@@ -168,6 +179,9 @@ void Mixer::apply(const Command &command)
             command.seconds > 0.0f ? distance / (command.seconds * kSampleRate) : distance;
         break;
     }
+    case CommandType::stream_follows_music:
+        stream_follows_music_[command.slot] = command.value > 0.5f;
+        break;
     }
 }
 
@@ -315,8 +329,9 @@ void Mixer::render_chunk(std::int16_t *out, int frames)
                                      : std::max(target, gain - stream_step_[s]);
             if (gain <= 0.0f)
                 continue;
-            left += stream_buffer_[s][static_cast<std::size_t>(frame) * 2] * gain * music;
-            right += stream_buffer_[s][static_cast<std::size_t>(frame) * 2 + 1] * gain * music;
+            const float bus = stream_follows_music_[s] ? music : 1.0f;
+            left += stream_buffer_[s][static_cast<std::size_t>(frame) * 2] * gain * bus;
+            right += stream_buffer_[s][static_cast<std::size_t>(frame) * 2 + 1] * gain * bus;
         }
         left = limit(left * master_gain_);
         right = limit(right * master_gain_);

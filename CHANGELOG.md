@@ -13,6 +13,8 @@ All notable changes to EliVier Explorer are recorded here. The format follows
   and changes the volume, L1 and R1 choose the sound track, Square the subtitles, Triangle switches to full
   screen and back. On one console, two 1080p HEVC films (8-bit and 10-bit, 5.1 sound) played at 24 pictures a
   second with none late; surround is mixed down at the usual weights with a soft limit on peaks.
+- Films and songs opened in a viewer play at their own volume (D-pad up and down) and no longer also follow the
+  background music volume, which made them about 16 dB quieter at its default.
 - The app heap is 1 GiB of direct memory when the console gives it, and 128 MiB of flexible memory as before
   when it does not (a 1080p film needs about 200 MiB).
 - `make video` builds FFmpeg, dav1d and zlib from pinned, checked sources (about ten minutes, once). The app

@@ -23,11 +23,28 @@ enum class Range
     full,
 };
 
+// The transfer function a stream is encoded with: what the numbers mean as light.
+enum class Transfer
+{
+    sdr, // BT.709 or sRGB style gamma
+    pq,  // HDR10, Dolby Vision's base layer
+    hlg,
+};
+
 struct YuvFormat
 {
     Matrix matrix = Matrix::bt709;
     Range range = Range::limited;
     int bit_depth = 8; // 8 to 16
+};
+
+// What a file says about the colour of its pictures. Files that say nothing get the SDR defaults
+// of their size (the demuxer fills this in; see src/video/demuxer.cpp).
+struct ColourInfo
+{
+    Matrix matrix = Matrix::bt709;
+    Range range = Range::limited;
+    Transfer transfer = Transfer::sdr;
 };
 
 // A sample as the shader reads it from a texture: the integer code value divided by the largest

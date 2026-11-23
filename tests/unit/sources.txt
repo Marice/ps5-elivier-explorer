@@ -28,6 +28,7 @@ src/gfx/triangulate.cpp
 src/explorer/*.cpp
 src/video/av_sync.cpp
 src/video/colour.cpp
+src/video/demuxer.cpp
 src/video/utc_time.cpp
 src/viewer/*.cpp
 src/third_party/bc7decomp/bc7.cpp

@@ -29,6 +29,27 @@ class ConsoleProbeTests(unittest.TestCase):
         self.assertEqual(probe.request_line("memory+upload", "1700000000"),
                          "probe memory+upload 1700000000\n")
 
+    def test_a_folder_that_exists_is_not_created_again(self):
+        class FakeFtp:
+            def __init__(self, existing):
+                self.existing = set(existing)
+                self.calls = []
+
+            def cwd(self, path):
+                self.calls.append(("CWD", path))
+                if path != "/" and path not in self.existing:
+                    raise probe.tour.error_perm("550 no such folder")
+
+            def mkd(self, path):
+                self.calls.append(("MKD", path))
+                self.existing.add(path)
+
+        console = probe.ProbeConsole.__new__(probe.ProbeConsole)
+        console.ftp = FakeFtp({"/data", "/data/homebrew"})
+        console.make_dirs("/data/homebrew/TITLE/assets")
+        made = [path for verb, path in console.ftp.calls if verb == "MKD"]
+        self.assertEqual(made, ["/data/homebrew/TITLE", "/data/homebrew/TITLE/assets"])
+
     def test_a_manual_launch_is_only_asked_for_with_the_switch_on(self):
         self.assertTrue(probe.wants_manual_launch({"PS5_MANUAL_LAUNCH": "1"}))
         self.assertFalse(probe.wants_manual_launch({}))

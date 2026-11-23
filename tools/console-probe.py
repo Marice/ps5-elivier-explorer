@@ -53,6 +53,32 @@ def valid_probe_name(name):
     return re.fullmatch(r"[a-z0-9:+-]{1,64}", name) is not None
 
 
+class ProbeConsole(tour.Console):
+    """The tour's console access, with one change: a folder that is there is not created again.
+
+    The tour sends MKD for every part of a path, /data and /data/homebrew included. Some FTP
+    servers for the console do not answer MKD for a folder that exists, and the upload hangs.
+    """
+
+    def make_dirs(self, path):
+        current = ""
+        for part in path.strip("/").split("/"):
+            current += "/" + part
+            try:
+                self.ftp.cwd(current)
+                continue
+            except tour.error_perm:
+                pass
+            try:
+                self.ftp.mkd(current)
+            except tour.error_perm:
+                pass
+        try:
+            self.ftp.cwd("/")
+        except tour.all_errors:
+            pass
+
+
 def wants_manual_launch(environ):
     return environ.get("PS5_MANUAL_LAUNCH") == "1"
 
@@ -103,7 +129,7 @@ def main():
     tour.say(f"Checking the console's services at {host}")
     if not tour.port_open(host, ftp_port) or (not manual and not tour.port_open(host, elf_port)):
         tour.stop("FTP or the ELF loader does not answer")
-    console = tour.Console(host, ftp_port)
+    console = ProbeConsole(host, ftp_port)
     active = tour.running_titles(console)
     if title in active:
         tour.stop(f"{title} is running on the console; close it first")
@@ -135,7 +161,7 @@ def main():
 
     waited = 0
     while True:
-        console = tour.Console(host, ftp_port)
+        console = ProbeConsole(host, ftp_port)
         registered = "mount.lnk" in (console.names(f"/user/app/{title}") or [])
         console.close()
         if registered:
@@ -178,7 +204,7 @@ def main():
 
     def connect():
         try:
-            return tour.Console(host, ftp_port)
+            return ProbeConsole(host, ftp_port)
         except tour.all_errors:
             done.set()
             tour.stop("the console stopped answering during the run; do not retry, look at klog.txt")
@@ -265,4 +291,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except tour.all_errors as error:
+        tour.stop(f"the console stopped answering ({error}); nothing was retried and nothing was "
+                  "deleted: look at the console before running again")

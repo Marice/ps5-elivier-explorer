@@ -8,11 +8,11 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 ### Added
 
 - A video viewer (`.mp4 .mkv .webm .avi .mov` and more): H.264, H.265, VP9, AV1 and older codecs decoded in
-  software up to 1920 x 1088, with sound (stereo output; surround is mixed down) and subtitles (the file's own
+  software up to 3840 x 2176 (4K) with the large heap and 1920 x 1088 without it, with sound (stereo output; surround is mixed down) and subtitles (the file's own
   text tracks, and `.srt`, `.vtt`, `.ass` or `.ssa` files beside the film). Cross plays and pauses, the D-pad seeks
   and changes the volume, L1 and R1 choose the sound track, Square the subtitles, Triangle switches to full
   screen and back. On one console, two 1080p HEVC films (8-bit and 10-bit, 5.1 sound) played at 24 pictures a
-  second with none late; surround is mixed down at the usual weights with a soft limit on peaks.
+  second with none late, and a 4K HEVC 10-bit film at 60 fps showed 60 pictures a second in most seconds; surround is mixed down at the usual weights with a soft limit on peaks.
 - Films and songs opened in a viewer play at their own volume (D-pad up and down) and no longer also follow the
   background music volume, which made them about 16 dB quieter at its default.
 - The app heap is 1 GiB of direct memory when the console gives it, and 128 MiB of flexible memory as before

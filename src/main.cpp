@@ -30,6 +30,7 @@
 #include "platform/ps5/hen_access.hpp"
 #include "platform/ps5/hw_video.hpp"
 #include "platform/ps5/surround_out.hpp"
+#include "platform/ps5/video_out_hook.hpp"
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/probes.hpp"
 #include "platform/ps5/system.hpp"
@@ -319,6 +320,7 @@ int main()
         sys::park();
     }
     explorer::trace("display open %dx%d", display.width(), display.height());
+    ps5::trace_video_out_status("after the display opened");
 
     // A probe request turns this launch into a measurement run (docs/CONSOLE_VALIDATION.md).
     if (probe_asked)

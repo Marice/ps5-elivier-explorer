@@ -17,6 +17,11 @@ All notable changes to EliVier Explorer are recorded here. The format follows
   console's decoder (`libSceVideodec2`), brought up at start-up and kept for the run; other codecs, and a second
   film at the same time, decode in software. On one console a 4K60 HEVC 10-bit film showed 60 pictures a second in
   most seconds. `make HW_DECODE=0` builds without it, for a firmware that refuses the library.
+- Surround sound: a film with more than two channels plays on an eight-channel output of its own (5.1 and 7.1,
+  in the order L R C LFE, surrounds, backs; a 5.1 film's surrounds always on the surround pair), which the console
+  mixes down itself for a stereo TV; the interface's sounds stay on the stereo mixer. Checked by ear on one AV
+  receiver with a 5.1 set (a speakers probe plays a tone per channel). Without the output, sound is mixed down to
+  stereo as before.
 - Films and songs opened in a viewer play at their own volume (D-pad up and down) and no longer also follow the
   background music volume, which made them about 16 dB quieter at its default.
 - The app heap is 1 GiB of direct memory when the console gives it, and 128 MiB of flexible memory as before

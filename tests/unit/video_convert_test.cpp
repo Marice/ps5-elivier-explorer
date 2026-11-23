@@ -444,6 +444,34 @@ TEST(VideoConvert, ASemiPlanarFrameWithAShortChromaPitchIsRefused)
     EXPECT_FALSE(convert_to_rgba16(nv12, tables, out.data(), 10 * 8));
 }
 
+TEST(VideoConvert, EightBitValuesInSixteenBitWordsReadAsEightBit)
+{
+    // How the hardware decoder may write an 8-bit picture: each value in the low byte of a word.
+    const Picture narrow = varied(8, 4, 8);
+    Picture wide = flat(8, 4, 10, 1, 1, 0, 0, 0); // 16-bit planes of the same size
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 8; ++x)
+            put(wide.y, wide.pitch_y, 10, x, y, narrow.y[static_cast<std::size_t>(y) * narrow.pitch_y + x]);
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 4; ++x)
+        {
+            put(wide.u, wide.pitch_c, 10, x, y, narrow.u[static_cast<std::size_t>(y) * narrow.pitch_c + x]);
+            put(wide.v, wide.pitch_c, 10, x, y, narrow.v[static_cast<std::size_t>(y) * narrow.pitch_c + x]);
+        }
+    const ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+    Frame words = wide.frame(colour);
+    words.bit_depth = 8;
+    words.sample_bytes = 2;
+    ConvertTables tables;
+    std::vector<std::uint16_t> expected(8 * 4 * 4);
+    std::vector<std::uint16_t> got(8 * 4 * 4);
+    ASSERT_TRUE(convert_to_rgba16(narrow.frame(colour), tables, expected.data(), 8 * 8));
+    ASSERT_TRUE(convert_to_rgba16(words, tables, got.data(), 8 * 8));
+    EXPECT_EQ(expected, got);
+    words.sample_bytes = 3;
+    EXPECT_FALSE(convert_to_rgba16(words, tables, got.data(), 8 * 8));
+}
+
 TEST(VideoConvert, RowBandsPutTogetherAreThePicture)
 {
     const Picture p = varied(12, 9, 10);

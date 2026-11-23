@@ -35,6 +35,9 @@ struct Frame
     // 8 means one byte per sample. Above 8, every sample is a 16-bit little-endian word with the
     // value in its low bits (10-bit video: 0..1023), not shifted up as P010 does.
     int bit_depth = 8;
+    // Bytes per sample: 1 or 2, or 0 for "1 at 8 bits, 2 above". The hardware decoder can write
+    // an 8-bit picture in 16-bit words, which bit_depth alone cannot say.
+    int sample_bytes = 0;
     // log2 of how much smaller the chroma planes are: 1,1 is 4:2:0; 1,0 is 4:2:2; 0,0 is 4:4:4.
     int chroma_shift_x = 1;
     int chroma_shift_y = 1;

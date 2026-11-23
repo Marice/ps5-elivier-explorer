@@ -13,6 +13,7 @@ extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
 #include "video/audio_decoder.hpp"
 #include "video/av_sync.hpp"
 #include "video/convert_pool.hpp"
+#include "video/hardware_decoder.hpp"
 #include "video/subtitle_decoder.hpp"
 #include "video/video_decoder.hpp"
 
@@ -693,8 +694,15 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
     {
         if (stream.kind == StreamKind::video && impl->video_index < 0)
         {
-            impl->video = open_software_decoder(*impl->demuxer, stream.index, options.limits,
-                                                &impl->video_error);
+            // The hardware first, when the platform lent one and the stream suits it; software
+            // otherwise (docs/decision-log.md, D58).
+            std::string hardware_error;
+            impl->video = open_hardware_decoder(*impl->demuxer, stream.index, &hardware_error);
+            if (!impl->video)
+                impl->video = open_software_decoder(*impl->demuxer, stream.index, options.limits,
+                                                    &impl->video_error);
+            if (impl->video)
+                hui::explorer::trace("film: video decoder %s", impl->video->name().c_str());
             hui::explorer::trace("film: video decoder %s", impl->video ? "open" : "refused");
             if (impl->video)
                 impl->video_index = stream.index;
@@ -721,6 +729,12 @@ std::unique_ptr<PlaybackEngine> PlaybackEngine::open(audio::ByteReader reader, s
     impl->audio_ended = impl->audio == nullptr;
     impl->audio_done = impl->audio == nullptr;
     return std::unique_ptr<PlaybackEngine>(new PlaybackEngine(std::move(impl)));
+}
+
+std::string PlaybackEngine::video_decoder_name() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->video ? impl_->video->name() : std::string();
 }
 
 const MediaInfo &PlaybackEngine::info() const

@@ -32,6 +32,7 @@ src/video/colour.cpp
 src/video/convert.cpp
 src/video/convert_pool.cpp
 src/video/ffmpeg_colour.cpp
+src/video/hardware_decoder.cpp
 src/video/software_decoder.cpp
 src/video/playback_engine.cpp
 src/video/subtitle_decoder.cpp

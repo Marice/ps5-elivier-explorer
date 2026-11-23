@@ -70,6 +70,9 @@ class PlaybackEngine
                                                 const EngineOptions &options, std::string *error);
 
     const MediaInfo &info() const;
+    // What decodes the picture: "h264", "hevc", "libdav1d", or the hardware's name; empty when
+    // nothing does (no video, or it failed).
+    std::string video_decoder_name() const;
     double duration() const;
     bool has_video() const;
     bool has_audio() const;

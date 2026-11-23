@@ -133,7 +133,11 @@ bool readable(const Frame &frame, std::size_t out_pitch_bytes, std::size_t out_b
     for (int i = 0; i < planes; ++i)
         if (frame.planes[i] == nullptr || frame.pitches[i] <= 0)
             return false;
-    const int bytes = depth > 8 ? 2 : 1;
+    if (frame.sample_bytes != 0 && frame.sample_bytes != 1 && frame.sample_bytes != 2)
+        return false;
+    if (frame.sample_bytes == 1 && depth > 8)
+        return false;
+    const int bytes = frame.sample_bytes != 0 ? frame.sample_bytes : (depth > 8 ? 2 : 1);
     const int chroma_width = (width + (1 << frame.chroma_shift_x) - 1) >> frame.chroma_shift_x;
     // Semi-planar chroma holds Cb and Cr side by side: twice the samples in one row.
     const int chroma_row_bytes = chroma_width * bytes * (frame.semi_planar ? 2 : 1);
@@ -148,7 +152,7 @@ void convert_rows(const Frame &frame, const ConvertTables &tables, Out *out_rgba
                   std::size_t out_pitch_bytes, int first_row, int end_row)
 {
     const int width = frame.width;
-    const bool wide = frame.bit_depth > 8;
+    const bool wide = frame.sample_bytes != 0 ? frame.sample_bytes == 2 : frame.bit_depth > 8;
     const bool hdr = frame.colour.transfer == Transfer::pq;
     // HDR goes through a 10-bit signal and the table; everything else straight to 8 bits.
     const Coefficients k = make_coefficients(frame.colour.matrix, frame.colour.range,

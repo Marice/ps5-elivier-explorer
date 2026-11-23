@@ -18,6 +18,11 @@
 #include <mutex>
 #include <pthread.h>
 
+extern "C"
+{
+#include <libavcodec/packet.h>
+}
+
 namespace hui::video
 {
 
@@ -25,6 +30,9 @@ namespace
 {
 
 constexpr int kKeep = -2; // a track request that was not made
+// Compressed packets read ahead of the decoders, in bytes. Reading must not wait for the picture
+// queue: a file keeps its sound a second or more behind its pictures, and the clock is the sound.
+constexpr std::size_t kMaxBufferedBytes = 16u * 1024u * 1024u;
 
 // A request to leave a track as it is is kKeep; -1 is "none".
 bool is_requested(int stream)
@@ -48,8 +56,9 @@ struct PlaybackEngine::Impl
     std::unique_ptr<VideoPicture> held_picture; // converted, waiting for room in the queue
     AudioChunk held_chunk;
     bool has_held_chunk = false;
-    Packet pending_packet; // a packet the decoder could not take yet
-    bool has_pending_packet = false;
+    std::deque<Packet> video_packets; // read, waiting for the decoder
+    std::deque<Packet> audio_packets;
+    std::size_t buffered_bytes = 0;
     double drop_video_before = -1.0;
     double drop_audio_before = -1.0;
     bool demux_ended = false;
@@ -153,14 +162,6 @@ struct PlaybackEngine::Impl
         return moved;
     }
 
-    bool queues_full() const
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (wants_pictures() && static_cast<int>(pictures.size()) >= options.picture_queue)
-            return true;
-        return wants_sound() && sound_seconds >= options.audio_queue_seconds;
-    }
-
     bool apply_requests()
     {
         bool seek = false;
@@ -212,8 +213,9 @@ struct PlaybackEngine::Impl
         held_picture.reset();
         held_chunk = AudioChunk{};
         has_held_chunk = false;
-        pending_packet = Packet{};
-        has_pending_packet = false;
+        video_packets.clear();
+        audio_packets.clear();
+        buffered_bytes = 0;
         demux_ended = false;
         video_ended = video == nullptr;
         audio_ended = audio == nullptr;
@@ -337,44 +339,6 @@ struct PlaybackEngine::Impl
         return true;
     }
 
-    // Gives a packet to its decoder. False when the decoder is full: try again after draining.
-    bool dispatch(const Packet &packet)
-    {
-        if (packet.stream == video_index_unlocked() && video)
-        {
-            const SendResult sent = video->send(packet);
-            if (sent == SendResult::error)
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                video_error = "The picture could not be decoded";
-                video.reset();
-                video_ended = true;
-                return true;
-            }
-            return sent == SendResult::accepted;
-        }
-        if (packet.stream == audio_index_unlocked() && audio)
-        {
-            const SendResult sent = audio->send(packet);
-            if (sent == SendResult::error)
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                audio_error = "The sound could not be decoded";
-                audio.reset();
-                audio_ended = true;
-                audio_done = true;
-                return true;
-            }
-            return sent == SendResult::accepted;
-        }
-        if (packet.stream == subtitle_index_unlocked() && subtitle)
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            subtitle->decode(packet, track);
-        }
-        return true;
-    }
-
     // The indices are changed only by this thread (in apply_requests); reading them here needs no
     // lock, and the game thread reads them under the lock.
     int video_index_unlocked() const
@@ -390,6 +354,13 @@ struct PlaybackEngine::Impl
         return subtitle_index;
     }
 
+    static std::size_t size_of(const Packet &packet)
+    {
+        return packet.data ? static_cast<std::size_t>(std::max(packet.data->size, 0)) : 0;
+    }
+
+    // Reads one packet and sorts it: subtitles are decoded at once, pictures and sound wait in
+    // their own queue for their decoder.
     bool read_packet()
     {
         Packet packet;
@@ -399,11 +370,57 @@ struct PlaybackEngine::Impl
             demux_ended = true; // the end of the file, or a read error: the same for the viewer
             return true;
         }
-        if (!dispatch(packet))
+        if (packet.stream == video_index_unlocked() && video)
         {
-            pending_packet = std::move(packet);
-            has_pending_packet = true;
+            buffered_bytes += size_of(packet);
+            video_packets.push_back(std::move(packet));
         }
+        else if (packet.stream == audio_index_unlocked() && audio)
+        {
+            buffered_bytes += size_of(packet);
+            audio_packets.push_back(std::move(packet));
+        }
+        else if (packet.stream == subtitle_index_unlocked() && subtitle)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            subtitle->decode(packet, track);
+        }
+        return true;
+    }
+
+    // Gives the next packet of a queue to its decoder. False when there is none or the decoder is
+    // full (it has to be drained first).
+    bool feed(std::deque<Packet> &packets, bool is_video)
+    {
+        if (packets.empty())
+            return false;
+        const SendResult sent =
+            is_video ? video->send(packets.front()) : audio->send(packets.front());
+        if (sent == SendResult::full)
+            return false;
+        if (sent == SendResult::error)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (is_video)
+            {
+                video_error = "The picture could not be decoded";
+                video.reset();
+                video_ended = true;
+            }
+            else
+            {
+                audio_error = "The sound could not be decoded";
+                audio.reset();
+                audio_ended = true;
+                audio_done = true;
+            }
+            for (const Packet &packet : packets)
+                buffered_bytes -= std::min(buffered_bytes, size_of(packet));
+            packets.clear();
+            return true;
+        }
+        buffered_bytes -= std::min(buffered_bytes, size_of(packets.front()));
+        packets.pop_front();
         return true;
     }
 
@@ -422,27 +439,24 @@ struct PlaybackEngine::Impl
         bool worked = apply_requests();
         if (flush_held())
             worked = true;
-        if (held_picture || has_held_chunk)
-            return worked; // the queues are full: wait for the game thread
-        if (drain_video())
+        // Each side waits only for its own queue: a full picture queue must not keep the sound
+        // from being read, or the clock (the sound) never moves and the pictures never become due.
+        if (!held_picture && drain_video())
             return true;
-        if (drain_audio())
+        if (!has_held_chunk && drain_audio())
             return true;
-        if (has_pending_packet)
-        {
-            if (dispatch(pending_packet))
-            {
-                has_pending_packet = false;
-                return true;
-            }
-            return worked; // the decoder is still full and nothing could be drained
-        }
+        if (!held_picture && feed(video_packets, true))
+            return true;
+        if (!has_held_chunk && feed(audio_packets, false))
+            return true;
         if (!demux_ended)
         {
-            if (queues_full())
-                return worked;
-            return read_packet();
+            if (buffered_bytes < kMaxBufferedBytes)
+                return read_packet();
+            return worked;
         }
+        if (!video_packets.empty() || !audio_packets.empty())
+            return worked; // the decoders still have packets to take
         if (!sent_end)
         {
             if (video)
@@ -530,15 +544,14 @@ class EngineAudioSource final : public audio::Decoder
             impl_.sound_seconds = 0.0;
         if (written < frames)
         {
-            // Nothing queued. At the end that is the end; otherwise the decoder is behind (or a
-            // seek is still being served): silence keeps the timeline going.
+            // Nothing (more) queued. At the end that is the end. Otherwise the decoder is behind
+            // or a seek is still being served: frames already copied are handed over, and with
+            // none the player is told to ask again; it writes nothing and its clock waits.
             const bool at_end = impl_.audio_done && !impl_.awaiting_audio;
-            if (at_end || impl_.audio_index < 0)
+            if (at_end || impl_.audio_index < 0 || written > 0)
                 return written;
-            std::memset(stereo + static_cast<std::size_t>(written) * 2, 0,
-                        static_cast<std::size_t>(frames - written) * 2 * sizeof(float));
-            impl_.counters.silent_frames += static_cast<std::uint64_t>(frames - written);
-            written = frames;
+            ++impl_.counters.starved_reads;
+            return kTryLater;
         }
         return written;
     }

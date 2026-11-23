@@ -253,6 +253,25 @@ TEST_F(VideoViewerTest, ASubtitleFileBesideTheFilmIsOfferedAndShown)
     fs::remove_all(folder);
 }
 
+TEST_F(VideoViewerTest, SwitchingSubtitlesInTheMiddleDoesNotEndThePlayback)
+{
+    // The engine said "everything is decoded" before the switch; the queues were emptied by it
+    // and the viewer must not take that for the end of the film.
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/multi-track.mkv", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 0.3; }));
+    // Let the engine decode to the end of the short clip while the audio queue holds it back.
+    for (int i = 0; i < 30; ++i)
+        tick(*viewer);
+    tick(*viewer, press(hui::Action::west));
+    for (int i = 0; i < 10; ++i)
+    {
+        EXPECT_FALSE(viewer->ended()) << "frame " << i;
+        tick(*viewer);
+    }
+    EXPECT_LT(viewer->position(), 1.6);
+}
+
 TEST_F(VideoViewerTest, TheSoundTracksCanBeSwitched)
 {
     FakeTextures textures;

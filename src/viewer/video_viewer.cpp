@@ -289,7 +289,9 @@ void VideoViewer::cycle_sound(int step, double at)
 // Takes the picture that belongs to the clock and puts it in the texture.
 void VideoViewer::show_picture()
 {
-    if (textures_ == nullptr || !engine_->take_picture(position(), picture_))
+    // Pictures are taken even with nowhere to show them: the engine's queue must keep moving, or
+    // it stops reading and the sound (the clock) starves.
+    if (!engine_->take_picture(position(), picture_) || textures_ == nullptr)
         return;
     if (texture_ != 0 && (picture_.width != texture_width_ || picture_.height != texture_height_))
     {

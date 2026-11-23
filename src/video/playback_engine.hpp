@@ -93,9 +93,10 @@ class PlaybackEngine
     bool take_picture(double clock_seconds, VideoPicture &picture);
     // The lines showing at `seconds` of the chosen subtitle track.
     std::vector<SubtitleLine> subtitles_at(double seconds) const;
-    // Sound for audio::AudioPlayer::start(): stereo float at 48 kHz. Empty queue before the end
-    // reads as silence (the timeline goes on); 0 only at the end. At most one at a time, and it
-    // must be gone before the engine is.
+    // Sound for audio::AudioPlayer::start(): stereo float at 48 kHz. An empty queue before the end
+    // reads as audio::Decoder::kTryLater, so that the player writes nothing and its clock waits
+    // for the sound (writing silence would make the sound trail the picture by that much); 0
+    // only at the end. At most one at a time, and it must be gone before the engine is.
     std::unique_ptr<audio::Decoder> make_audio_source();
 
     // Everything is decoded and shown or heard.
@@ -108,7 +109,7 @@ class PlaybackEngine
         int pictures_late = 0;       // thrown away because their time had passed
         int damaged_video = 0;
         int damaged_audio = 0;
-        std::uint64_t silent_frames = 0; // sound frames the player asked for and the queue lacked
+        std::uint64_t starved_reads = 0; // times the player asked for sound and the queue had none
     };
     Stats stats() const;
 

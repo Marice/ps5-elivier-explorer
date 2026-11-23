@@ -50,8 +50,7 @@ int stream_of(const PlaybackEngine &engine, StreamKind kind, int nth = 0)
     return -1;
 }
 
-// What the sound queue holds right now, and no more: a read past it would be silence (by design,
-// so that the timeline goes on), which a test of the sound itself must not count.
+// What the sound queue holds right now, and no more: a read past it is "try later", not sound.
 std::vector<float> read_queued(PlaybackEngine &engine, hui::audio::Decoder &source)
 {
     std::vector<float> all;
@@ -68,7 +67,7 @@ std::vector<float> read_queued(PlaybackEngine &engine, hui::audio::Decoder &sour
     return all;
 }
 
-// Everything the sound queue holds, read the way the player does (silence included).
+// Reads the way the player does, up to `max_frames`; stops at "try later" and at the end.
 std::vector<float> read_sound(hui::audio::Decoder &source, int max_frames)
 {
     std::vector<float> all;
@@ -157,6 +156,22 @@ TEST(PlaybackEngine, TheQueuesAreBoundedSoTheEngineWaitsForTheGameThread)
     EXPECT_FALSE(engine->pump());  // and it stays idle until something is taken
 }
 
+TEST(PlaybackEngine, AFullPictureQueueDoesNotKeepTheSoundFromBeingRead)
+{
+    // The clock is the sound. If reading waited for the picture queue, a file that keeps its sound
+    // behind its pictures would stop with a full queue, the sound would never come, the clock
+    // would never move and no picture would ever fall due.
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    EngineOptions options;
+    options.picture_queue = 1; // full after the first picture, and nobody takes it
+    auto engine = open_engine(bytes, &error, options);
+    ASSERT_TRUE(engine) << error;
+    run_to_idle(*engine);
+    EXPECT_EQ(engine->stats().pictures_ready, 1);
+    EXPECT_GT(engine->stats().audio_seconds_ready, 0.5); // the sound was read and decoded anyway
+}
+
 TEST(PlaybackEngine, TheSoundSourceGivesStereoAndEndsWithTheFile)
 {
     const auto bytes = read_all("h264-aac.mp4");
@@ -183,13 +198,13 @@ TEST(PlaybackEngine, TheSoundSourceGivesStereoAndEndsWithTheFile)
     EXPECT_TRUE(engine->ended());
     const int frames = static_cast<int>(all.size() / 2);
     EXPECT_NEAR(frames, 2 * 48000, 0.05 * 2 * 48000);
-    EXPECT_EQ(engine->stats().silent_frames, 0u); // only what was queued was read
+    EXPECT_EQ(engine->stats().starved_reads, 0u); // only what was queued was read
     // At the very end the source says so: 0, not silence.
     std::vector<float> block(1152 * 2);
     EXPECT_EQ(source->read(block.data(), 1152), 0);
 }
 
-TEST(PlaybackEngine, ReadingBeforeAnythingIsDecodedGivesSilenceNotTheEnd)
+TEST(PlaybackEngine, ReadingBeforeAnythingIsDecodedSaysTryLaterNotTheEnd)
 {
     const auto bytes = read_all("h264-aac.mp4");
     std::string error;
@@ -197,10 +212,28 @@ TEST(PlaybackEngine, ReadingBeforeAnythingIsDecodedGivesSilenceNotTheEnd)
     ASSERT_TRUE(engine) << error;
     auto source = engine->make_audio_source();
     std::vector<float> block(1152 * 2, 1.0f);
-    EXPECT_EQ(source->read(block.data(), 1152), 1152); // not 0: the player would stop
+    // Not 0 (the player would stop) and not silence (the player would write it and the sound
+    // would trail the picture): "ask again", and the player's clock waits.
+    EXPECT_EQ(source->read(block.data(), 1152), hui::audio::Decoder::kTryLater);
+    EXPECT_EQ(engine->stats().starved_reads, 1u);
     for (const float v : block)
-        ASSERT_EQ(v, 0.0f);
-    EXPECT_EQ(engine->stats().silent_frames, 1152u);
+        ASSERT_EQ(v, 1.0f); // nothing was written into the buffer
+}
+
+TEST(PlaybackEngine, ASeekIsFollowedByTryLaterUntilTheSoundOfTheNewPlaceIsThere)
+{
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    auto engine = open_engine(bytes, &error);
+    ASSERT_TRUE(engine) << error;
+    auto source = engine->make_audio_source();
+    run_to_idle(*engine);
+    std::vector<float> block(1152 * 2);
+    ASSERT_GT(source->read(block.data(), 1152), 0);
+    engine->seek(1.0);
+    EXPECT_EQ(source->read(block.data(), 1152), hui::audio::Decoder::kTryLater); // nothing stale
+    run_to_idle(*engine);
+    EXPECT_GT(source->read(block.data(), 1152), 0); // and then the sound from the new place
 }
 
 TEST(PlaybackEngine, SeekingDropsWhatWasQueuedAndStartsAtTheTarget)

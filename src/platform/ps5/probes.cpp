@@ -1099,12 +1099,16 @@ void draw_packed_bars(const Packing &packing, int index, int width, int height)
 
 void probe_hdr_videoout(Display &display, Report &report)
 {
-    // The runtime opens the output at the first swap: show a few plain frames first.
+    // The runtime opens the output at the first swap: show a few plain frames first. The system's
+    // splash picture lies over everything until the app hides it (the first try showed the bars
+    // behind it, D70): hidden after the first frame, as the app does.
     for (int i = 0; i < 10; ++i)
     {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         display.swap();
+        if (i == 1)
+            step("hdr videoout: splash hidden %s", sys::hide_splash_screen() ? "yes" : "no");
     }
     const VideoOutState state = video_out_state();
     report.add("hdr", "videoout_handle", static_cast<std::int64_t>(state.handle));

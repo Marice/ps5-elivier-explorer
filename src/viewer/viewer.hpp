@@ -38,9 +38,14 @@ class TextureHost
     // 8-bit RGBA, rows top to bottom; 0 when it could not be made.
     virtual std::uint32_t create(int width, int height, const std::uint8_t *rgba) = 0;
     virtual void destroy(std::uint32_t texture) = 0;
-    // New pixels for a texture made by create(), of the same width and height (a moving picture).
-    // False when the texture or the size is not right.
-    virtual bool update(std::uint32_t texture, int width, int height, const std::uint8_t *rgba) = 0;
+    // A texture for a moving picture, 16 bits a channel (the console uploads those about 15 times
+    // faster than 8-bit ones, D52), made empty; fill it with update(). 0 when it could not be made.
+    virtual std::uint32_t create_streaming(int width, int height) = 0;
+    // New pixels (RGBA, 16 bits a channel, rows top to bottom) for a texture made by
+    // create_streaming(), of the same width and height. False when the texture or the size is
+    // not right.
+    virtual bool update(std::uint32_t texture, int width, int height,
+                        const std::uint16_t *rgba) = 0;
 };
 
 // What a viewer may use. Anything may be null (a test, or a build without it): a viewer that

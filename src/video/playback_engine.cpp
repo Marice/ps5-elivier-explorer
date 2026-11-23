@@ -263,8 +263,8 @@ struct PlaybackEngine::Impl
         picture->height = frame.height;
         picture->pts = frame.pts;
         picture->rgba.resize(static_cast<std::size_t>(frame.width) * frame.height * 4);
-        if (!convert_to_rgba(frame, tables, picture->rgba.data(),
-                             static_cast<std::size_t>(frame.width) * 4))
+        if (!convert_to_rgba16(frame, tables, picture->rgba.data(),
+                               static_cast<std::size_t>(frame.width) * 8))
         {
             std::lock_guard<std::mutex> lock(mutex);
             video_error = "This pixel format cannot be shown yet";

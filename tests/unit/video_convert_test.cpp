@@ -328,3 +328,43 @@ TEST(VideoConvert, RefusesWhatItCannotRead)
 }
 
 } // namespace
+
+namespace
+{
+
+TEST(VideoConvert, SixteenBitOutputIsTheEightBitOutputTimesTwoFiftySeven)
+{
+    for (const int depth : {8, 10})
+        for (const Transfer transfer : {Transfer::sdr, Transfer::pq})
+        {
+            Picture p = flat(6, 4, depth, 1, 1, 90, 100, 170);
+            for (int x = 0; x < 6; ++x)
+                put(p.y, p.pitch_y, depth, x, 1, depth == 8 ? 30 + 30 * x : 120 + 120 * x);
+            ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+            colour.transfer = transfer;
+            ConvertTables tables8;
+            ConvertTables tables16;
+            std::vector<std::uint8_t> narrow(6 * 4 * 4);
+            std::vector<std::uint16_t> wide(6 * 4 * 4, 0x7777);
+            ASSERT_TRUE(convert_to_rgba(p.frame(colour), tables8, narrow.data(), 6 * 4));
+            ASSERT_TRUE(convert_to_rgba16(p.frame(colour), tables16, wide.data(), 6 * 8));
+            for (std::size_t i = 0; i < narrow.size(); ++i)
+                EXPECT_EQ(wide[i], narrow[i] * 257) << "depth " << depth << " sample " << i;
+        }
+}
+
+TEST(VideoConvert, SixteenBitOutputHonoursItsPitchAndRefusesAShortOne)
+{
+    const Picture p = flat(4, 2, 8, 1, 1, 126, 128, 128);
+    const ColourInfo colour = sdr(Matrix::bt709, Range::limited);
+    ConvertTables tables;
+    std::vector<std::uint16_t> wide(2 * 20, 0x1234); // 4 pixels of 4 samples, 40 bytes a row
+    ASSERT_TRUE(convert_to_rgba16(p.frame(colour), tables, wide.data(), 40));
+    EXPECT_EQ(wide[15], 65535);       // alpha of the last pixel of row 0
+    EXPECT_EQ(wide[16], 0x1234);      // padding is not touched
+    EXPECT_EQ(wide[20 + 3], 65535);   // alpha of the first pixel of row 1
+    EXPECT_FALSE(convert_to_rgba16(p.frame(colour), tables, wide.data(), 31));
+    EXPECT_FALSE(convert_to_rgba16(p.frame(colour), tables, nullptr, 40));
+}
+
+} // namespace

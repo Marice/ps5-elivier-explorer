@@ -108,10 +108,19 @@ inline std::int32_t sample(const std::uint8_t *row, int x, bool wide)
     return word;
 }
 
-} // namespace
+// What one output channel is made of: 8 bits as they are, or 16 bits (value times 257).
+inline std::uint8_t store(std::uint8_t * /*tag*/, std::int32_t value)
+{
+    return static_cast<std::uint8_t>(value);
+}
+inline std::uint16_t store(std::uint16_t * /*tag*/, std::int32_t value)
+{
+    return static_cast<std::uint16_t>(value * 257);
+}
 
-bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *out_rgba,
-                     std::size_t out_pitch_bytes)
+template <typename Out>
+bool convert_frame(const Frame &frame, ConvertTables &tables, Out *out_rgba,
+                   std::size_t out_pitch_bytes)
 {
     const int width = frame.width;
     const int height = frame.height;
@@ -129,7 +138,7 @@ bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *ou
     const int chroma_width = (width + (1 << frame.chroma_shift_x) - 1) >> frame.chroma_shift_x;
     if (frame.pitches[0] < width * bytes || frame.pitches[1] < chroma_width * bytes ||
         frame.pitches[2] < chroma_width * bytes ||
-        out_pitch_bytes < static_cast<std::size_t>(width) * 4)
+        out_pitch_bytes < static_cast<std::size_t>(width) * 4 * sizeof(Out))
         return false;
 
     const bool hdr = frame.colour.transfer == Transfer::pq;
@@ -148,7 +157,8 @@ bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *ou
             frame.planes[1] + static_cast<std::ptrdiff_t>(chroma_row) * frame.pitches[1];
         const std::uint8_t *cr_row =
             frame.planes[2] + static_cast<std::ptrdiff_t>(chroma_row) * frame.pitches[2];
-        std::uint8_t *out = out_rgba + static_cast<std::ptrdiff_t>(y) * out_pitch_bytes;
+        Out *out = reinterpret_cast<Out *>(reinterpret_cast<std::uint8_t *>(out_rgba) +
+                                           static_cast<std::ptrdiff_t>(y) * out_pitch_bytes);
         for (int x = 0; x < width; ++x, out += 4)
         {
             const int cx = x >> frame.chroma_shift_x;
@@ -164,20 +174,34 @@ bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *ou
             const std::int32_t b = clamp_to(static_cast<std::int32_t>(blue >> 16), k.scale);
             if (hdr)
             {
-                out[0] = tables.pq_to_sdr[static_cast<std::size_t>(r)];
-                out[1] = tables.pq_to_sdr[static_cast<std::size_t>(g)];
-                out[2] = tables.pq_to_sdr[static_cast<std::size_t>(b)];
+                out[0] = store(out, tables.pq_to_sdr[static_cast<std::size_t>(r)]);
+                out[1] = store(out, tables.pq_to_sdr[static_cast<std::size_t>(g)]);
+                out[2] = store(out, tables.pq_to_sdr[static_cast<std::size_t>(b)]);
             }
             else
             {
-                out[0] = static_cast<std::uint8_t>(r);
-                out[1] = static_cast<std::uint8_t>(g);
-                out[2] = static_cast<std::uint8_t>(b);
+                out[0] = store(out, r);
+                out[1] = store(out, g);
+                out[2] = store(out, b);
             }
-            out[3] = 255;
+            out[3] = store(out, 255);
         }
     }
     return true;
+}
+
+} // namespace
+
+bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *out_rgba,
+                     std::size_t out_pitch_bytes)
+{
+    return convert_frame(frame, tables, out_rgba, out_pitch_bytes);
+}
+
+bool convert_to_rgba16(const Frame &frame, ConvertTables &tables, std::uint16_t *out_rgba,
+                       std::size_t out_pitch_bytes)
+{
+    return convert_frame(frame, tables, out_rgba, out_pitch_bytes);
 }
 
 } // namespace hui::video

@@ -117,8 +117,8 @@ TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
     long sum = 0;
     for (std::size_t i = 0; i < picture.rgba.size(); i += 4)
     {
-        sum += picture.rgba[i] + picture.rgba[i + 1] + picture.rgba[i + 2];
-        EXPECT_EQ(picture.rgba[i + 3], 255);
+        sum += (picture.rgba[i] + picture.rgba[i + 1] + picture.rgba[i + 2]) / 257;
+        EXPECT_EQ(picture.rgba[i + 3], 65535);
     }
     const double mean = static_cast<double>(sum) / (160.0 * 90.0 * 3.0);
     EXPECT_GT(mean, 20.0); // a test pattern, not black

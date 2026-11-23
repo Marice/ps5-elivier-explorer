@@ -29,7 +29,19 @@ class FakeTextures final : public hui::viewer::TextureHost
         live.erase(texture);
     }
 
-    bool update(std::uint32_t texture, int width, int height, const std::uint8_t *rgba) override
+    std::uint32_t create_streaming(int width, int height) override
+    {
+        if (width <= 0 || height <= 0)
+            return 0;
+        last_width = width;
+        last_height = height;
+        ++created;
+        ++streaming;
+        live.insert(++next_);
+        return next_;
+    }
+
+    bool update(std::uint32_t texture, int width, int height, const std::uint16_t *rgba) override
     {
         if (live.count(texture) == 0 || width != last_width || height != last_height ||
             rgba == nullptr)
@@ -40,6 +52,7 @@ class FakeTextures final : public hui::viewer::TextureHost
     }
 
     int created = 0;
+    int streaming = 0;
     int updated = 0;
     int last_pixel0 = -1;
     int destroyed = 0;

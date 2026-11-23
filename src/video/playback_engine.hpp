@@ -31,7 +31,7 @@ struct VideoPicture
     double pts = kNoTimestamp;
     int width = 0;
     int height = 0;
-    std::vector<std::uint8_t> rgba; // width * height * 4, rows top to bottom
+    std::vector<std::uint16_t> rgba; // 16 bits a channel: width * height * 4, rows top to bottom
 };
 
 struct SubtitleLine

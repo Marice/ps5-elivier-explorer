@@ -1,4 +1,4 @@
-// EliVier Explorer - A decoded picture to RGBA8 on the CPU, ready for a texture.
+// EliVier Explorer - A decoded picture to RGBA8 or RGBA16 on the CPU, ready for a texture.
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
@@ -35,5 +35,11 @@ struct ConvertTables
 // `out_rgba` must hold out_pitch_bytes * height bytes.
 bool convert_to_rgba(const Frame &frame, ConvertTables &tables, std::uint8_t *out_rgba,
                      std::size_t out_pitch_bytes);
+
+// The same picture with 16 bits per channel (every 8-bit value times 257, so 255 is 65535). The
+// console uploads 16-bit textures about 15 times faster than 8-bit ones (docs/decision-log.md,
+// D52), so a moving picture goes this way. The pitch is in bytes and at least width * 8.
+bool convert_to_rgba16(const Frame &frame, ConvertTables &tables, std::uint16_t *out_rgba,
+                       std::size_t out_pitch_bytes);
 
 } // namespace hui::video

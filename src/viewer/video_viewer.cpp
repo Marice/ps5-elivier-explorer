@@ -300,7 +300,7 @@ void VideoViewer::show_picture()
     }
     if (texture_ == 0)
     {
-        texture_ = textures_->create(picture_.width, picture_.height, picture_.rgba.data());
+        texture_ = textures_->create_streaming(picture_.width, picture_.height);
         texture_width_ = picture_.width;
         texture_height_ = picture_.height;
         if (texture_ == 0)
@@ -309,7 +309,7 @@ void VideoViewer::show_picture()
             return;
         }
     }
-    else if (!textures_->update(texture_, picture_.width, picture_.height, picture_.rgba.data()))
+    if (!textures_->update(texture_, picture_.width, picture_.height, picture_.rgba.data()))
     {
         error_ = "The picture cannot be shown";
         return;

@@ -15,7 +15,8 @@ class GlTextureHost final : public hui::viewer::TextureHost
   public:
     std::uint32_t create(int width, int height, const std::uint8_t *rgba) override;
     void destroy(std::uint32_t texture) override;
-    bool update(std::uint32_t texture, int width, int height, const std::uint8_t *rgba) override;
+    std::uint32_t create_streaming(int width, int height) override;
+    bool update(std::uint32_t texture, int width, int height, const std::uint16_t *rgba) override;
 };
 
 } // namespace hui::gfx

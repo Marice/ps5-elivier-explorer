@@ -101,6 +101,7 @@ TEST_F(VideoViewerTest, ShowsPicturesInATextureThatIsUpdatedNotRemade)
     ASSERT_TRUE(viewer->error().empty()) << viewer->error();
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 5; }));
     EXPECT_EQ(textures.created, 1);
+    EXPECT_EQ(textures.streaming, 1); // a moving picture uses the fast 16-bit texture (D52)
     EXPECT_EQ(textures.last_width, 160);
     EXPECT_EQ(textures.last_height, 90);
     EXPECT_GE(textures.updated, 3);

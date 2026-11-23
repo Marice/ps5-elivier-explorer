@@ -32,6 +32,7 @@ src/video/colour.cpp
 src/video/ffmpeg_colour.cpp
 src/video/software_decoder.cpp
 src/video/demuxer.cpp
+src/video/subtitle_text.cpp
 src/video/utc_time.cpp
 src/viewer/*.cpp
 src/third_party/bc7decomp/bc7.cpp

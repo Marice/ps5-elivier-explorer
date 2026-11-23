@@ -144,6 +144,38 @@ TEST(PlaybackEngine, ConvertingOnSeveralThreadsGivesTheSamePictures)
     EXPECT_EQ(a.rgba, b.rgba);
 }
 
+TEST(PlaybackEngine, WithItsThreadsRunningASeekLetsNoOldPictureThrough)
+{
+    // The threads convert on a stage of their own (D61): a picture converted while the seek was
+    // made must not come out after it.
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    EngineOptions options;
+    options.convert_threads = 2;
+    auto engine = open_engine(bytes, &error, options);
+    ASSERT_TRUE(engine) << error;
+    engine->start();
+    const auto wait_for_pictures = [&] {
+        for (int i = 0; i < 400 && engine->stats().pictures_ready < 2; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return engine->stats().pictures_ready >= 2;
+    };
+    ASSERT_TRUE(wait_for_pictures());
+    for (int round = 0; round < 5; ++round)
+    {
+        engine->seek(1.2);
+        ASSERT_TRUE(wait_for_pictures()) << "round " << round;
+        VideoPicture picture;
+        ASSERT_TRUE(engine->take_picture(1.2, picture));
+        EXPECT_GT(picture.pts, 1.1) << "round " << round;
+        engine->seek(0.0);
+        ASSERT_TRUE(wait_for_pictures()) << "round " << round;
+        ASSERT_TRUE(engine->take_picture(0.0, picture));
+        EXPECT_LT(picture.pts, 0.2) << "round " << round;
+    }
+    engine->stop();
+}
+
 TEST(PlaybackEngine, PicturesComeOutInTimeAndLookLikeRealPictures)
 {
     const auto bytes = read_all("h264-aac.mp4");

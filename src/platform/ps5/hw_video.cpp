@@ -221,7 +221,20 @@ class Backend final : public video::HardwareBackend
         output.size = sizeof(output);
         const std::int64_t begin = sys::monotonic_us();
         const int32_t rc = sceVideodec2Decode(resident_.decoder, &input, &frame, &output);
-        if (sys::monotonic_us() - begin > kStuckMicroseconds)
+        const std::int64_t spent = sys::monotonic_us() - begin;
+        // How long the hardware takes per unit, now and then (D61).
+        timed_us_ += spent;
+        slowest_us_ = std::max(slowest_us_, spent);
+        if (++timed_ == 120)
+        {
+            explorer::trace("hw video: %s decode avg %.1f ms, slowest %.1f ms over 120 units",
+                            resident_.name, static_cast<double>(timed_us_) / 120000.0,
+                            static_cast<double>(slowest_us_) / 1000.0);
+            timed_ = 0;
+            timed_us_ = 0;
+            slowest_us_ = 0;
+        }
+        if (spent > kStuckMicroseconds)
         {
             broken_ = true;
             note("a decode call took over a second; giving up on the hardware for this film");
@@ -342,6 +355,9 @@ class Backend final : public video::HardwareBackend
     int empty_units_ = 0;
     int refusals_ = 0;
     int notes_ = 0;
+    int timed_ = 0;
+    std::int64_t timed_us_ = 0;
+    std::int64_t slowest_us_ = 0;
 };
 
 std::unique_ptr<video::HardwareBackend> lend(const video::HardwareStream &stream)

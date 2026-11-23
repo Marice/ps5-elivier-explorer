@@ -103,6 +103,25 @@ struct PlaybackEngine::Impl
     Stats counters;
     bool source_taken = false;
 
+    // ---- the conversion stage (D61) ----
+    // While the threads run, a decoded picture goes to a thread of its own for its conversion, so
+    // that the next one is decoded meanwhile: the hardware decoder is a synchronous call and a 4K
+    // conversion takes about 12 ms, which in turn left a 4K60 film at about 47 pictures a second.
+    // With pump() alone (the tests) the conversion happens in line, as before.
+    struct DecodedFrame
+    {
+        Frame frame;
+        unsigned generation = 0;
+    };
+    std::deque<DecodedFrame> decoded; // under `mutex`: at most one waits
+    bool converting = false;          // under `mutex`
+    bool unconvertible = false;       // under `mutex`: a picture the converter refused
+    unsigned video_generation = 0;    // under `mutex`: one more at every seek
+    bool convert_stopping = false;    // under `mutex`
+    std::condition_variable convert_wake;
+    pthread_t convert_thread{};
+    std::atomic<bool> convert_running{false};
+
     // ---- the thread ----
     pthread_t thread{};
     bool running = false;
@@ -152,6 +171,13 @@ struct PlaybackEngine::Impl
         return static_cast<int>(pictures.size() + spare.size()) + (held_picture ? 1 : 0);
     }
 
+    // A converted picture waits for room in the queue (the conversion stage may set it).
+    bool holding_picture() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return held_picture != nullptr;
+    }
+
     void recycle_locked(std::unique_ptr<VideoPicture> picture)
     {
         if (picture && spare.size() < 4 &&
@@ -164,6 +190,10 @@ struct PlaybackEngine::Impl
         for (auto &picture : pictures)
             recycle_locked(std::move(picture));
         pictures.clear();
+        // Decoded but not converted yet: from before the request too. A conversion in flight is
+        // dropped when it finishes, by its generation.
+        decoded.clear();
+        ++video_generation;
         sound.clear();
         sound_front_offset = 0;
         sound_seconds = 0.0;
@@ -178,6 +208,7 @@ struct PlaybackEngine::Impl
         {
             pictures.push_back(std::move(held_picture));
             moved = true;
+            convert_wake.notify_one(); // the conversion stage waits while a picture is held
         }
         if (has_held_chunk && sound_seconds < options.audio_queue_seconds)
         {
@@ -270,6 +301,17 @@ struct PlaybackEngine::Impl
     {
         if (!video || video_ended)
             return false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (unconvertible)
+            {
+                video.reset();
+                video_ended = true;
+                return true;
+            }
+            if (!decoded.empty())
+                return false; // the conversion stage has one waiting already
+        }
         Frame frame;
         const ReceiveResult result = video->receive(frame);
         if (result == ReceiveResult::end)
@@ -291,6 +333,21 @@ struct PlaybackEngine::Impl
         // decoded (it has to be) but never converted or shown.
         if (frame.pts != kNoTimestamp && frame.pts < drop_video_before - 1e-3)
             return true;
+        if (convert_running.load())
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            decoded.push_back({std::move(frame), video_generation});
+            convert_wake.notify_one();
+            return true;
+        }
+        present(frame, 0, false);
+        return true;
+    }
+
+    // Converts a decoded picture and queues it. On the conversion stage `generation` says which
+    // seek the picture belongs to; one from before the latest seek is dropped.
+    void present(const Frame &frame, unsigned generation, bool check_generation)
+    {
         if (!first_picture_traced)
             hui::explorer::trace("film: first decoded picture %dx%d depth %d", frame.width,
                                  frame.height, frame.bit_depth);
@@ -312,9 +369,9 @@ struct PlaybackEngine::Impl
         {
             std::lock_guard<std::mutex> lock(mutex);
             video_error = "This pixel format cannot be shown yet";
-            video.reset();
-            video_ended = true;
-            return true;
+            unconvertible = true; // the engine thread ends the picture (it owns the decoder)
+            recycle_locked(std::move(picture));
+            return;
         }
         if (traced_pictures < 8)
         {
@@ -328,11 +385,45 @@ struct PlaybackEngine::Impl
             first_picture_traced = true;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        if (static_cast<int>(pictures.size()) < queue_cap_locked())
+        if (check_generation && generation != video_generation)
+            recycle_locked(std::move(picture));
+        else if (static_cast<int>(pictures.size()) < queue_cap_locked())
             pictures.push_back(std::move(picture));
         else
             held_picture = std::move(picture);
-        return true;
+    }
+
+    // The conversion stage: one decoded picture at a time, never while a converted one is held.
+    void convert_loop()
+    {
+        for (;;)
+        {
+            DecodedFrame item;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                convert_wake.wait(lock, [&] {
+                    return convert_stopping || (!decoded.empty() && !held_picture);
+                });
+                if (convert_stopping)
+                    return;
+                item = std::move(decoded.front());
+                decoded.pop_front();
+                converting = true;
+            }
+            present(item.frame, item.generation, true);
+            item.frame = Frame{}; // gives the decoder's buffer back before the next is taken
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                converting = false;
+            }
+            notify();
+        }
+    }
+
+    static void *convert_main(void *self)
+    {
+        static_cast<Impl *>(self)->convert_loop();
+        return nullptr;
     }
 
     bool drain_audio()
@@ -493,11 +584,11 @@ struct PlaybackEngine::Impl
 
     void finish_if_done()
     {
-        if (demux_ended && sent_end && video_ended && audio_ended && !held_picture &&
-            !has_held_chunk)
+        if (demux_ended && sent_end && video_ended && audio_ended && !has_held_chunk)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            finished = true;
+            if (!held_picture && decoded.empty() && !converting)
+                finished = true;
         }
     }
 
@@ -508,11 +599,12 @@ struct PlaybackEngine::Impl
             worked = true;
         // Each side waits only for its own queue: a full picture queue must not keep the sound
         // from being read, or the clock (the sound) never moves and the pictures never become due.
-        if (!held_picture && drain_video())
+        const bool holding = holding_picture();
+        if (!holding && drain_video())
             return true;
         if (!has_held_chunk && drain_audio())
             return true;
-        if (!held_picture && feed(video_packets, true))
+        if (!holding && feed(video_packets, true))
             return true;
         if (!has_held_chunk && feed(audio_packets, false))
             return true;
@@ -799,6 +891,18 @@ void PlaybackEngine::start()
     if (impl_->running)
         return;
     impl_->stopping.store(false);
+    // The conversion stage first, so that the engine thread finds it running. Without it the
+    // engine converts in line.
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->convert_stopping = false;
+    }
+    pthread_attr_t convert_attributes;
+    pthread_attr_init(&convert_attributes);
+    pthread_attr_setstacksize(&convert_attributes, 512 * 1024);
+    impl_->convert_running.store(pthread_create(&impl_->convert_thread, &convert_attributes,
+                                                &Impl::convert_main, impl_.get()) == 0);
+    pthread_attr_destroy(&convert_attributes);
     // A bigger stack than the default: the decoders keep tables on it. Never name the thread:
     // pthread_setname_np hangs on the console.
     pthread_attr_t attributes;
@@ -820,6 +924,16 @@ void PlaybackEngine::stop()
     impl_->notify();
     pthread_join(impl_->thread, nullptr);
     impl_->running = false;
+    if (impl_->convert_running.load())
+    {
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            impl_->convert_stopping = true;
+        }
+        impl_->convert_wake.notify_all();
+        pthread_join(impl_->convert_thread, nullptr);
+        impl_->convert_running.store(false);
+    }
 }
 
 void PlaybackEngine::seek(double seconds)

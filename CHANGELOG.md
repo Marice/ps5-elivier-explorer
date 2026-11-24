@@ -5,6 +5,15 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The app now lists under the Media tab instead of Games.
+
+### Fixed
+
+- The build downloads the ps5-opengl SDK from its new home (the old account was removed).
+
+
 ## [v00.002.000] - 2026-11-23
 
 ### Added

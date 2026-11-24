@@ -49,7 +49,7 @@ documentation to learn the craft, enough working code to copy from.
 | **Components** | A library of reusable pieces that own their focus, motion and sound: lists, grids, carousels, tabs, menus, dialogs, sheets, toasts, forms, progress, badges, counters and more. Each is restyled by any theme, tuned through a style struct and extended through slots. |
 | **Designs** | Complete screens, each in one file: a home screen, a library, a storefront, a HUD with a pause menu, a radial menu, an on-screen keyboard, a settings screen that really works, and more. |
 | **A tour** | The app can drive itself. The same scripted run renders every picture in these docs on a PC, runs the unit tests, and validates a build on the console. |
-| **A PS5 build** | Reproducible native build and packaging, from [ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate), rendering through [ps5-opengl](https://github.com/blackbearreloaded/ps5-opengl). |
+| **A PS5 build** | Reproducible native build and packaging, from [ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate), rendering through [ps5-opengl](https://github.com/darkxex/ps5-opengl). |
 
 ## The designs
 

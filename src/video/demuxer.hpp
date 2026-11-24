@@ -52,12 +52,23 @@ struct StreamInfo
     int sample_rate = 0;
 };
 
+// One entry of the file's chapter list (a DVD/Blu-ray remux's, usually), in order.
+struct Chapter
+{
+    double start = 0.0; // seconds from the start of the file
+    std::string title;  // "Chapter 3"; whatever the file calls it, never invented
+};
+
 struct MediaInfo
 {
     std::string container; // "mov,mp4,m4a,3gp,3g2,mj2", "matroska,webm"
     double duration = 0.0; // seconds; 0 when the file does not say
     std::vector<StreamInfo> streams;
+    std::vector<Chapter> chapters; // at most kMaxChapters, oldest first; empty for most files
 };
+
+// A file is untrusted input: a chapter list longer than this is not read.
+constexpr int kMaxChapters = 500;
 
 // How a stream counts time: its packets and frames carry whole ticks.
 struct StreamTiming

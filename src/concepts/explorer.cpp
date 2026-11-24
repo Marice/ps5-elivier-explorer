@@ -183,11 +183,17 @@ constexpr app::TourStep kTour[] = {
     {1.0f, 0, Direction::none, "files-video-subtitles"},
     {0.3f, action_bit(Action::north), Direction::none, nullptr},
     {0.5f, 0, Direction::none, "files-video-fullscreen"},
-    // The Options menu, over the full-screen film: open it, check "Fill the screen" (the fourth
-    // item; a checkable one, so confirming it does not close the menu), then "Subtitle delay"
-    // (the second) to show the adjust panel.
+    // The Options menu, over the full-screen film: open it, look at "Chapters" (this demo clip's
+    // own), back to the main menu, then check "Fill the screen" (the last item, after Start over,
+    // Chapters, Subtitle delay and Sound delay; a checkable item, so confirming it does not close
+    // the menu), then "Subtitle delay" to show the adjust panel.
     {0.3f, action_bit(Action::menu), Direction::none, nullptr},
     {0.5f, 0, Direction::none, "files-video-menu"},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-chapters"},
+    {0.3f, action_bit(Action::back), Direction::none, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
     {0.06f, 0, Direction::down, nullptr},
     {0.06f, 0, Direction::down, nullptr},
     {0.06f, 0, Direction::down, nullptr},

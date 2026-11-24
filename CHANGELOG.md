@@ -5,6 +5,11 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Films with a chapter list (a DVD/Blu-ray remux's, usually) show it under Options > Chapters,
+  with each title and timecode and the one playing now marked; choosing one seeks to it.
+
 ### Fixed
 
 - "Fill the screen" in the video viewer's Options menu now actually fills it; confirming it

@@ -131,7 +131,7 @@ class VideoViewer final : public Viewer
     gfx::Color ink(gfx::Color colour) const; // a colour drawn over the film, as the display reads it
     void sync_hdr();
     void open_menu(ui::Feedback &feedback);
-    void menu_chosen(int tag);
+    void menu_chosen(int tag, ui::Feedback &feedback);
     bool handle_adjust(const InputFrame &input);
     void remember_position();
     void show_note(std::string text);
@@ -172,6 +172,7 @@ class VideoViewer final : public Viewer
     double subtitle_delay_ = 0.0;  // seconds the subtitles come later (negative: earlier)
     double sound_delay_ = 0.0;     // seconds the sound comes later than the picture
     bool fill_ = false;            // full screen covered, the picture cropped
+    bool showing_chapters_ = false; // the menu shows the chapter list instead of its usual items
     HeldStep jump_;                // L2/R2: a minute back or forward, faster while held
     int jump_repeats_ = 0;
     HdrOutput *hdr_ = nullptr; // the display's HDR10 mode, when there is one

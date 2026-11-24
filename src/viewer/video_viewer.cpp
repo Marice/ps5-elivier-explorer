@@ -36,8 +36,14 @@ constexpr int kTagRestart = 1;
 constexpr int kTagSubtitleDelay = 2;
 constexpr int kTagSoundDelay = 3;
 constexpr int kTagFill = 4;
+constexpr int kTagChapters = 5;
+constexpr int kTagChapterBase = 100; // +0 .. +kMaxChapterItems-1, one per chapter shown
 constexpr double kDelayStep = 0.1;
 constexpr double kMaxDelay = 10.0;
+// `ui::Menu` lays every item out with no scrolling: a chapter list longer than this is cut off,
+// with a disabled line saying how many more there are (a film with this many chapters is rare;
+// a scrollable menu is a bigger change than this round's, see docs/decision-log.md).
+constexpr std::size_t kMaxChapterItems = 20;
 
 std::string signed_seconds(double seconds)
 {
@@ -488,17 +494,47 @@ void VideoViewer::open_menu(ui::Feedback &feedback)
         made.disabled = disabled;
         return made;
     };
-    items.push_back(item("Start from the beginning", kTagRestart));
-    ui::MenuItem subtitles = item("Subtitle delay", kTagSubtitleDelay, subtitle_choice_ == 0);
-    subtitles.shortcut = signed_seconds(subtitle_delay_);
-    items.push_back(subtitles);
-    ui::MenuItem sound = item("Sound delay", kTagSoundDelay, !player_);
-    sound.shortcut = signed_seconds(sound_delay_);
-    items.push_back(sound);
-    ui::MenuItem fill = item("Fill the screen", kTagFill, !fullscreen_);
-    fill.checkable = true;
-    fill.checked = fill_;
-    items.push_back(fill);
+    const std::vector<hui::video::Chapter> &chapters =
+        engine_ ? engine_->info().chapters : std::vector<hui::video::Chapter>{};
+    if (showing_chapters_ && !chapters.empty())
+    {
+        const double at = position();
+        for (std::size_t i = 0; i < chapters.size() && i < kMaxChapterItems; ++i)
+        {
+            const std::string title =
+                chapters[i].title.empty() ? "Chapter " + std::to_string(i + 1) : chapters[i].title;
+            const bool current =
+                at >= chapters[i].start &&
+                (i + 1 == chapters.size() || at < chapters[i + 1].start);
+            ui::MenuItem chapter = item(current ? title + " (now)" : title,
+                                        kTagChapterBase + static_cast<int>(i));
+            chapter.shortcut = format_clock(chapters[i].start);
+            items.push_back(chapter);
+        }
+        if (chapters.size() > kMaxChapterItems)
+        {
+            ui::MenuItem more =
+                item(std::to_string(chapters.size() - kMaxChapterItems) + " more, not shown", -1,
+                    /*disabled=*/true);
+            items.push_back(more);
+        }
+    }
+    else
+    {
+        items.push_back(item("Start from the beginning", kTagRestart));
+        ui::MenuItem chapters_item = item("Chapters", kTagChapters, chapters.empty());
+        items.push_back(chapters_item);
+        ui::MenuItem subtitles = item("Subtitle delay", kTagSubtitleDelay, subtitle_choice_ == 0);
+        subtitles.shortcut = signed_seconds(subtitle_delay_);
+        items.push_back(subtitles);
+        ui::MenuItem sound = item("Sound delay", kTagSoundDelay, !player_);
+        sound.shortcut = signed_seconds(sound_delay_);
+        items.push_back(sound);
+        ui::MenuItem fill = item("Fill the screen", kTagFill, !fullscreen_);
+        fill.checkable = true;
+        fill.checked = fill_;
+        items.push_back(fill);
+    }
     menu_.style.theme = ui::default_theme();
     const gfx::Rect area =
         fullscreen_ ? gfx::Rect{0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight} : window_area_;
@@ -508,8 +544,18 @@ void VideoViewer::open_menu(ui::Feedback &feedback)
     menu_.open({area.x + area.w - 140.0f, area.y + area.h - kBarHeight, 1.0f, 1.0f}, feedback);
 }
 
-void VideoViewer::menu_chosen(int tag)
+void VideoViewer::menu_chosen(int tag, ui::Feedback &feedback)
 {
+    if (tag >= kTagChapterBase)
+    {
+        const std::vector<hui::video::Chapter> &chapters = engine_->info().chapters;
+        const std::size_t index = static_cast<std::size_t>(tag - kTagChapterBase);
+        menu_.dismiss();
+        showing_chapters_ = false;
+        if (index < chapters.size())
+            restart_at(chapters[index].start);
+        return;
+    }
     switch (tag)
     {
     case kTagRestart:
@@ -523,6 +569,10 @@ void VideoViewer::menu_chosen(int tag)
                 player_->set_paused(false);
         }
         restart_at(0.0);
+        break;
+    case kTagChapters:
+        showing_chapters_ = true;
+        open_menu(feedback);
         break;
     case kTagSubtitleDelay:
         menu_.dismiss();
@@ -561,11 +611,21 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     // The menu has the pad while it is open; Circle closes it, not the film.
     if (menu_.is_open() && engine_)
     {
-        // A plain item confirms as `activated`; a checkable one (Fill the screen) as `changed`,
-        // with the box already flipped by the menu itself. Either way our own state follows.
-        const ui::Event chosen = menu_.handle(input, feedback);
-        if (chosen == ui::Event::activated || chosen == ui::Event::changed)
-            menu_chosen(menu_.items()[static_cast<std::size_t>(menu_.focus())].tag);
+        // Circle on the chapter list goes back to the main menu, not out of it.
+        if (showing_chapters_ && input.is_pressed(Action::back))
+        {
+            showing_chapters_ = false;
+            open_menu(feedback);
+        }
+        else
+        {
+            // A plain item confirms as `activated`; a checkable one (Fill the screen) as
+            // `changed`, with the box already flipped by the menu itself. Either way our own
+            // state follows.
+            const ui::Event chosen = menu_.handle(input, feedback);
+            if (chosen == ui::Event::activated || chosen == ui::Event::changed)
+                menu_chosen(menu_.items()[static_cast<std::size_t>(menu_.focus())].tag, feedback);
+        }
         if (player_)
             player_->pump(dt);
         sync_hdr();

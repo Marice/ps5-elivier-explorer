@@ -535,7 +535,8 @@ TEST_F(VideoViewerTest, FillTheScreenOnlyAppliesInFullScreenAndTogglesFromTheMen
     tick(*viewer, press(hui::Action::menu));
     tick(*viewer, nav(hui::Direction::down));
     tick(*viewer, nav(hui::Direction::down));
-    tick(*viewer, nav(hui::Direction::down)); // start, subtitle delay, sound delay, fill
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // start, chapters, subtitle delay, sound delay, fill
     tick(*viewer, press(hui::Action::confirm));
     EXPECT_TRUE(viewer->fill());
     EXPECT_TRUE(viewer->menu_open()); // a checkable item does not close the menu
@@ -556,7 +557,8 @@ TEST_F(VideoViewerTest, SubtitleDelayShiftsWhenACueShowsAndIsOnlyOfferedWithSubt
     tick(*viewer, press(hui::Action::west)); // a subtitle track: the menu item is now offered
 
     tick(*viewer, press(hui::Action::menu));
-    tick(*viewer, nav(hui::Direction::down)); // subtitle delay is the second item
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // subtitle delay is the third item (after chapters)
     tick(*viewer, press(hui::Action::confirm));
     EXPECT_FALSE(viewer->menu_open()); // choosing it leaves the menu for the adjust panel
     for (int i = 0; i < 5; ++i)
@@ -575,7 +577,8 @@ TEST_F(VideoViewerTest, SoundDelayShiftsWhichPictureIsShownAndIsNotOfferedWithou
     ASSERT_TRUE(run_until(*silent, [&] { return silent->pictures_shown() >= 1; }, /*audio=*/false));
     tick(*silent, press(hui::Action::menu));
     tick(*silent, nav(hui::Direction::down));
-    tick(*silent, nav(hui::Direction::down)); // sound delay is the third item
+    tick(*silent, nav(hui::Direction::down));
+    tick(*silent, nav(hui::Direction::down)); // sound delay is the fourth item (after chapters)
     tick(*silent, press(hui::Action::confirm));
     EXPECT_TRUE(silent->menu_open()); // disabled: no player, so confirm refuses and stays open
 
@@ -585,12 +588,54 @@ TEST_F(VideoViewerTest, SoundDelayShiftsWhichPictureIsShownAndIsNotOfferedWithou
     tick(*viewer, press(hui::Action::menu));
     tick(*viewer, nav(hui::Direction::down));
     tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
     tick(*viewer, press(hui::Action::confirm));
     EXPECT_FALSE(viewer->menu_open());
     tick(*viewer, nav(hui::Direction::right));
     EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9);
     tick(*viewer, press(hui::Action::back));
     EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9); // Circle leaves the value as it was set
+}
+
+TEST_F(VideoViewerTest, ChaptersAreNotOfferedWithoutThemAndSeekWhenChosen)
+{
+    FakeTextures plain_textures;
+    const auto plain = open(kDir + "/h264-aac.mp4", &plain_textures);
+    ASSERT_TRUE(run_until(*plain, [&] { return plain->pictures_shown() >= 1; }));
+    tick(*plain, press(hui::Action::menu));
+    tick(*plain, nav(hui::Direction::down)); // Chapters is the second item
+    tick(*plain, press(hui::Action::confirm));
+    EXPECT_TRUE(plain->menu_open()); // disabled: no chapters in this file, confirm refuses
+
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/chapters.mkv", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm)); // open the chapter list
+    EXPECT_TRUE(viewer->menu_open());
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // the third chapter, "Credits" at 1.2 s
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open());
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 1.0; }));
+    EXPECT_NEAR(viewer->position(), 1.2, 0.2);
+}
+
+TEST_F(VideoViewerTest, CircleOnTheChapterListGoesBackToTheMainMenuNotOutOfIt)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/chapters.mkv", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm)); // the chapter list
+    EXPECT_TRUE(viewer->menu_open());
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_TRUE(viewer->menu_open()); // back at the main menu, not closed
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_FALSE(viewer->menu_open()); // this time it closes
 }
 
 TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)

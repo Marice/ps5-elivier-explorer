@@ -108,7 +108,7 @@ int natural_compare(const std::string &a, const std::string &b)
     return 0;
 }
 
-PaneModel::PaneModel(Source &source) : source_(source)
+PaneModel::PaneModel(Source &source) : source_(&source)
 {
 }
 
@@ -184,7 +184,7 @@ int PaneModel::index_of(std::string_view name) const
 
 bool PaneModel::list_into(const std::string &path, const std::string &focus_name, int fallback)
 {
-    ListResult listing = source_.list(path);
+    ListResult listing = source_->list(path);
     if (!listing.ok)
     {
         state_.list_error = listing.error;
@@ -194,8 +194,8 @@ bool PaneModel::list_into(const std::string &path, const std::string &focus_name
     state_.list_error = 0;
     const bool same_folder = state_.path == path;
     state_.path = path;
-    state_.space = source_.space(path);
-    state_.changeable = !is_protected_folder(path) && source_.is_plain_path(path);
+    state_.space = source_->space(path);
+    state_.changeable = !is_protected_folder(path) && source_->is_plain_path(path);
     state_.total_entries = static_cast<int>(listing.entries.size());
     sort_entries(&listing.entries);
     state_.truncated = listing.entries.size() > static_cast<std::size_t>(kPaneRowCap);
@@ -361,9 +361,9 @@ int PaneModel::make_folder(const std::string &name)
         return EPERM;
     const std::string path = join(state_.path, name);
     Entry existing;
-    if (source_.stat(path, &existing))
+    if (source_->stat(path, &existing))
         return EEXIST;
-    const int error = source_.make_directory(path);
+    const int error = source_->make_directory(path);
     trace("pane: new folder %s: %d", path.c_str(), error);
     if (error == 0)
         reload_focusing(name);
@@ -382,9 +382,9 @@ int PaneModel::rename_entry(const std::string &from, const std::string &to)
         return EPERM;
     const std::string target = join(state_.path, to);
     Entry existing;
-    if (source_.stat(target, &existing))
+    if (source_->stat(target, &existing))
         return EEXIST; // never over something that is there
-    const int error = source_.rename(join(state_.path, from), target);
+    const int error = source_->rename(join(state_.path, from), target);
     trace("pane: rename %s -> %s: %d", from.c_str(), to.c_str(), error);
     if (error == 0)
     {

@@ -92,7 +92,14 @@ class PaneModel
     }
     Source &source() const
     {
-        return source_;
+        return *source_;
+    }
+    // Points this pane at a different Source from now on (entering or leaving an archive): the
+    // caller still has to go_to() wherever the new source should open; nothing here lists on its
+    // own, since the right starting path is the caller's to know, not this model's to guess.
+    void set_source(Source &source)
+    {
+        source_ = &source;
     }
 
     // path + "/" + name, without a double slash at the root.
@@ -107,7 +114,7 @@ class PaneModel
     void sort_entries(std::vector<Entry> *entries) const;
     int index_of(std::string_view name) const;
 
-    Source &source_;
+    Source *source_;
     PaneState state_;
 };
 

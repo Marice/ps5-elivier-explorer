@@ -334,8 +334,14 @@ TEST_F(VideoViewerTest, CrossPausesAndResumes)
 
 TEST_F(VideoViewerTest, PlaysToTheEndAndCrossStartsOver)
 {
+    // Alone in its folder, so there is no next episode to count down to: Cross after the end
+    // restarts this film, not something else.
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-alone-test";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "film.mp4");
     FakeTextures textures;
-    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    const auto viewer = open((folder / "film.mp4").string(), &textures);
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
     EXPECT_FALSE(viewer->playing());
     EXPECT_GT(drawn(*viewer), 0u); // "Ended" with the bar up
@@ -343,6 +349,7 @@ TEST_F(VideoViewerTest, PlaysToTheEndAndCrossStartsOver)
     EXPECT_FALSE(viewer->ended());
     EXPECT_TRUE(run_until(
         *viewer, [&] { return viewer->position() > 0.2 && viewer->position() < 1.0; }));
+    fs::remove_all(folder);
 }
 
 TEST_F(VideoViewerTest, TheDpadSeeksAndTheClockFollows)
@@ -636,6 +643,81 @@ TEST_F(VideoViewerTest, CircleOnTheChapterListGoesBackToTheMainMenuNotOutOfIt)
     EXPECT_TRUE(viewer->menu_open()); // back at the main menu, not closed
     tick(*viewer, press(hui::Action::back));
     EXPECT_FALSE(viewer->menu_open()); // this time it closes
+}
+
+// Two short clips, named so natural order is unambiguous: episode1 before episode2.
+fs::path make_episode_folder()
+{
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-episodes-test";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "episode1.mp4");
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "episode2.mp4");
+    return folder;
+}
+
+TEST_F(VideoViewerTest, TheCountdownEndsByReplacingThisViewerWithTheNextEpisode)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    EXPECT_EQ(viewer->reopen_as(), nullptr);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    EXPECT_EQ(viewer->reopen_as(), nullptr); // the countdown just started
+    EXPECT_TRUE(run_until(*viewer, [&] { return viewer->reopen_as() != nullptr; }));
+    EXPECT_EQ(*viewer->reopen_as(), (folder / "episode2.mp4").string());
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, CrossDuringTheCountdownAdvancesAtOnce)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    tick(*viewer, press(hui::Action::confirm));
+    ASSERT_NE(viewer->reopen_as(), nullptr);
+    EXPECT_EQ(*viewer->reopen_as(), (folder / "episode2.mp4").string());
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, CircleDuringTheCountdownCancelsItAndStaysOnTheEndedScreen)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_EQ(viewer->reopen_as(), nullptr);
+    EXPECT_TRUE(viewer->ended());
+    EXPECT_FALSE(viewer->closing()); // Circle cancelled the countdown, it did not leave the viewer
+    // It really is cancelled, not just paused: waiting again never fires it on its own.
+    for (int i = 0; i < 400; ++i)
+    {
+        tick(*viewer);
+        ASSERT_EQ(viewer->reopen_as(), nullptr) << "frame " << i;
+    }
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, WithoutANextVideoNothingCountsDownAndDrawingStaysClean)
+{
+    // Alone in its folder, as the Cross-starts-over test above is.
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-alone-test2";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "film.mp4");
+    FakeTextures textures;
+    const auto viewer = open((folder / "film.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    for (int i = 0; i < 60; ++i)
+    {
+        tick(*viewer);
+        ASSERT_EQ(viewer->reopen_as(), nullptr) << "frame " << i;
+    }
+    EXPECT_GT(drawn(*viewer), 0u); // the "Ended" bar, no countdown panel to go with it
+    fs::remove_all(folder);
 }
 
 TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)

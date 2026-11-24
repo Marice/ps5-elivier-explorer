@@ -29,6 +29,9 @@ struct Seen
     int closed = 0;
     std::string path;
     bool leave = false;
+    // Set from a test, read by the next FakeViewer's update(): to be cleared by the test right
+    // after one frame, or every later FakeViewer would keep asking to reopen it too.
+    std::string reopen_target;
 };
 Seen g_seen;
 
@@ -58,6 +61,10 @@ class FakeViewer final : public Viewer
     bool closing() const override
     {
         return g_seen.leave;
+    }
+    const std::string *reopen_as() const override
+    {
+        return g_seen.reopen_target.empty() ? nullptr : &g_seen.reopen_target;
     }
     void close() override
     {
@@ -110,6 +117,7 @@ class ExplorerScreenTest : public ConceptFixture
         fs::create_directories(root_);
         std::ofstream(root_ + "/a.fake") << "fake content";
         std::ofstream(root_ + "/b.txt") << "plain";
+        std::ofstream(root_ + "/c.fake") << "another fake file";
         registry_.add(std::make_unique<FakeHandler>());
         hui::concepts::set_explorer_registry(&registry_);
         hui::concepts::set_explorer_start(root_, root_);
@@ -165,6 +173,36 @@ TEST_F(ExplorerScreenTest, TheOptionsMenuOffersOpenAsForAFileTheHandlerKnows)
     send(*screen_, press(hui::Action::confirm)); // the first item: "Open as Fake"
     EXPECT_EQ(g_seen.opened, 1);
     EXPECT_EQ(g_seen.path, root_ + "/a.fake");
+}
+
+TEST_F(ExplorerScreenTest, AViewerThatAsksToReopenAsAnotherFileIsClosedAndReplaced)
+{
+    send(*screen_, press(hui::Action::confirm)); // opens a.fake
+    ASSERT_EQ(g_seen.opened, 1);
+    ASSERT_EQ(g_seen.path, root_ + "/a.fake");
+
+    g_seen.reopen_target = root_ + "/c.fake"; // what the video viewer's "next episode" does
+    send(*screen_, idle(), 0.0f);
+    g_seen.reopen_target.clear(); // or the fresh viewer would ask to reopen it again next frame
+
+    EXPECT_EQ(g_seen.closed, 1);  // the old viewer was closed, not just dropped
+    EXPECT_EQ(g_seen.opened, 2);  // a new one was opened in its place
+    EXPECT_EQ(g_seen.path, root_ + "/c.fake");
+    expect_drawable(*screen_); // the new viewer, not the Files lists
+}
+
+TEST_F(ExplorerScreenTest, AskingToReopenAsAFileNobodyKnowsLeavesNoViewerAtAll)
+{
+    send(*screen_, press(hui::Action::confirm)); // opens a.fake
+    ASSERT_EQ(g_seen.opened, 1);
+
+    g_seen.reopen_target = root_ + "/b.txt"; // no handler for plain text in this registry
+    send(*screen_, idle(), 0.0f);
+    g_seen.reopen_target.clear();
+
+    EXPECT_EQ(g_seen.closed, 1);
+    EXPECT_EQ(g_seen.opened, 1); // the attempt failed: no second open
+    expect_drawable(*screen_);   // back to the Files lists, not stuck on a closed viewer
 }
 
 TEST_F(ExplorerScreenTest, ALongNameDrawsWhileItScrolls)

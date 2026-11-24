@@ -9,6 +9,9 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 - Films with a chapter list (a DVD/Blu-ray remux's, usually) show it under Options > Chapters,
   with each title and timecode and the one playing now marked; choosing one seeks to it.
+- The next video in the same folder: when one ends and another follows (natural order, so
+  "Episode 2" comes before "Episode 10"), a panel counts down to it; Cross plays it at once,
+  Circle cancels and stays on the finished film.
 
 ### Fixed
 

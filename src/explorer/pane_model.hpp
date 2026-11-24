@@ -25,6 +25,11 @@ namespace hui::explorer
 // are kept and the header says "N of M" (decision D8); the selection is capped the same (D16).
 constexpr int kPaneRowCap = 2000;
 
+// Case-insensitive, with runs of digits compared as numbers: "file2" before "file10". 0 when the
+// two are equal this way. Used for sorting a pane's rows, and reused wherever file names need
+// the same order (the video viewer's "next episode" among its folder's other videos).
+int natural_compare(const std::string &a, const std::string &b);
+
 enum class SortKey : std::uint8_t
 {
     name,

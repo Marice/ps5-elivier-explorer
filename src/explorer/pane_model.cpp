@@ -28,7 +28,38 @@ bool digit(char c)
     return c >= '0' && c <= '9';
 }
 
-// Case-insensitive, with runs of digits compared as numbers: file2 before file10.
+std::string extension_of(const std::string &name)
+{
+    const std::size_t dot = name.rfind('.');
+    return dot == std::string::npos || dot == 0 ? std::string() : name.substr(dot + 1);
+}
+
+template <typename T> int three_way(T a, T b)
+{
+    return a < b ? -1 : (a > b ? 1 : 0);
+}
+
+std::string normalized(const std::string &path)
+{
+    std::string out = path;
+    while (out.size() > 1 && out.back() == '/')
+        out.pop_back();
+    return out.empty() ? std::string("/") : out;
+}
+
+// 0, or the errno a bad name earns.
+int check_name(const std::string &name)
+{
+    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos ||
+        name.find('\0') != std::string::npos)
+        return EINVAL;
+    if (name.size() > 255)
+        return ENAMETOOLONG;
+    return 0;
+}
+
+} // namespace
+
 int natural_compare(const std::string &a, const std::string &b)
 {
     std::size_t i = 0;
@@ -76,38 +107,6 @@ int natural_compare(const std::string &a, const std::string &b)
         return -1;
     return 0;
 }
-
-std::string extension_of(const std::string &name)
-{
-    const std::size_t dot = name.rfind('.');
-    return dot == std::string::npos || dot == 0 ? std::string() : name.substr(dot + 1);
-}
-
-template <typename T> int three_way(T a, T b)
-{
-    return a < b ? -1 : (a > b ? 1 : 0);
-}
-
-std::string normalized(const std::string &path)
-{
-    std::string out = path;
-    while (out.size() > 1 && out.back() == '/')
-        out.pop_back();
-    return out.empty() ? std::string("/") : out;
-}
-
-// 0, or the errno a bad name earns.
-int check_name(const std::string &name)
-{
-    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos ||
-        name.find('\0') != std::string::npos)
-        return EINVAL;
-    if (name.size() > 255)
-        return ENAMETOOLONG;
-    return 0;
-}
-
-} // namespace
 
 PaneModel::PaneModel(Source &source) : source_(source)
 {

@@ -700,7 +700,9 @@ class ExplorerScreen final : public app::Concept
         {
             // A viewer has the pad and the screen to itself until it says it is done.
             viewer_->update(input, dt, feedback);
-            if (viewer_->closing())
+            if (const std::string *next = viewer_->reopen_as())
+                open_next_video(*next);
+            else if (viewer_->closing())
                 close_viewer();
             toasts_.update(dt, feedback);
             return;
@@ -1061,11 +1063,22 @@ class ExplorerScreen final : public app::Concept
         }
         if (entry == nullptr)
             return;
-        const std::string path = PaneModel::join(pane.model.state().path, name);
+        open_path(PaneModel::join(pane.model.state().path, name), *entry, handler);
+    }
+
+    // What open_file does, for a path the caller already has (not necessarily in a pane's own
+    // listing): the video viewer's "next episode" calls this with a sibling file it found itself.
+    // Leaves viewer_ null on any failure: safe whether it was already null (opening from a pane)
+    // or still held an already-closed viewer (open_next_video, below).
+    void open_path(const std::string &path, const Entry &entry,
+                   const hui::viewer::FileHandler *handler = nullptr)
+    {
+        const std::string name = path.substr(path.rfind('/') + 1);
         if (handler == nullptr)
-            handler = registry().best(probe_with_head(*entry, path));
+            handler = registry().best(probe_with_head(entry, path));
         if (handler == nullptr)
         {
+            viewer_.reset();
             toasts_.push(ui::StatusKind::info, "Nothing can open this yet", name);
             return;
         }
@@ -1081,7 +1094,7 @@ class ExplorerScreen final : public app::Concept
         hui::viewer::FileRef file;
         file.source = &source_;
         file.path = path;
-        file.entry = *entry;
+        file.entry = entry;
         viewer_ = handler->open(context, file);
         if (!viewer_)
         {
@@ -1090,6 +1103,29 @@ class ExplorerScreen final : public app::Concept
         }
         viewer_path_ = path;
         hui::explorer::trace("viewer: %s opens %s", handler->id(), path.c_str());
+    }
+
+    // The video viewer asked to be replaced by the next episode: close it the normal way (which
+    // writes its resume position first) and open the path it gave, exactly as if it had been
+    // opened from a pane. On any failure this ends with no viewer at all (open_path's doing), so
+    // the Files screen needs the same "lists slide back in" it gets from close_viewer().
+    // `path` is taken by value, not by reference: it points into the viewer this closes and
+    // replaces, so it must be copied out before that happens.
+    void open_next_video(std::string path)
+    {
+        hui::explorer::trace("viewer: next episode %s", path.c_str());
+        viewer_->close();
+        Entry entry;
+        if (source_.stat(path, &entry))
+            open_path(path, entry);
+        else
+        {
+            viewer_.reset();
+            toasts_.push(ui::StatusKind::danger, "Could not open it", path);
+        }
+        if (!viewer_)
+            for (PaneView &pane : panes_)
+                pane.table.enter();
     }
 
     void close_viewer()

@@ -6,6 +6,7 @@
 #include "audio/mixer.hpp"
 #include "audio/player.hpp"
 #include "audio/surround.hpp"
+#include "explorer/pane_model.hpp"
 #include "explorer/source.hpp"
 #include "explorer/trace.hpp"
 #include "video/colour.hpp"
@@ -18,6 +19,7 @@ extern "C" std::size_t hui_heap_capacity(int *direct) __attribute__((weak));
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 
 namespace hui::viewer
@@ -44,6 +46,7 @@ constexpr double kMaxDelay = 10.0;
 // with a disabled line saying how many more there are (a film with this many chapters is rare;
 // a scrollable menu is a bigger change than this round's, see docs/decision-log.md).
 constexpr std::size_t kMaxChapterItems = 20;
+constexpr float kNextCountdownSeconds = 5.0f;
 
 std::string signed_seconds(double seconds)
 {
@@ -62,6 +65,11 @@ std::string file_name(const std::string &path)
 {
     return path.substr(path.rfind('/') + 1);
 }
+
+// Shared with VideoHandler::match() below and with finding the next video in a folder.
+constexpr const char *const kVideoExtensions[] = {
+    "mp4", "m4v", "mkv", "webm", "avi", "mov", "ts", "m2ts", "mts", "wmv", "flv", "mpg", "mpeg",
+    "ogv", "3gp"};
 
 std::string lower(std::string text)
 {
@@ -312,7 +320,9 @@ double VideoViewer::position() const
     return free_clock_;
 }
 
-// Text files beside the film that begin with its name: "Film.srt", "Film.nl.srt".
+// Text files beside the film that begin with its name ("Film.srt", "Film.nl.srt"), and every
+// other video in the same folder, naturally ordered, for "next episode" (D77): one listing does
+// both jobs.
 void VideoViewer::find_subtitles(hui::explorer::Source *source, const std::string &path)
 {
     const std::size_t slash = path.rfind('/');
@@ -327,6 +337,27 @@ void VideoViewer::find_subtitles(hui::explorer::Source *source, const std::strin
     const hui::explorer::ListResult listing = source->list(folder);
     if (!listing.ok)
         return;
+    std::vector<std::string> names;
+    for (const hui::explorer::Entry &entry : listing.entries)
+    {
+        if (entry.kind == hui::explorer::EntryKind::file &&
+            std::find(std::begin(kVideoExtensions), std::end(kVideoExtensions),
+                      extension_of(entry.name)) != std::end(kVideoExtensions))
+            names.push_back(entry.name);
+    }
+    std::sort(names.begin(), names.end(),
+             [](const std::string &a, const std::string &b) {
+                 return hui::explorer::natural_compare(a, b) < 0;
+             });
+    for (const std::string &name : names)
+    {
+        folder_videos_.push_back((folder == "/" ? "" : folder) + "/" + name);
+        if (name == file_name(path))
+        {
+            this_video_index_ = folder_videos_.size() - 1;
+            indexed_ = true;
+        }
+    }
     for (const hui::explorer::Entry &entry : listing.entries)
     {
         if (external_.size() >= kMaxExternalSubtitles)
@@ -645,9 +676,18 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     }
     if (input.is_pressed(Action::back))
     {
-        closing_ = true;
-        close();
-        return;
+        if (next_countdown_ > 0.0f)
+        {
+            // Circle cancels the automatic next episode; it stays on the ended screen.
+            next_countdown_ = 0.0f;
+            overlay_ = kOverlaySeconds;
+        }
+        else
+        {
+            closing_ = true;
+            close();
+            return;
+        }
     }
     if (!engine_)
         return;
@@ -659,6 +699,16 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
 
     overlay_ = std::max(0.0f, overlay_ - dt);
     note_timer_ = std::max(0.0f, note_timer_ - dt);
+    if (next_countdown_ > 0.0f)
+    {
+        next_countdown_ -= dt;
+        if (next_countdown_ <= 0.0f)
+        {
+            next_countdown_ = 0.0f;
+            next_requested_ = true;
+            next_path_ = folder_videos_[this_video_index_ + 1];
+        }
+    }
     // The position is written now and then while playing, so a crash or a power cut loses little.
     if (!paused_ && !ended_ && (memory_timer_ += dt) >= 30.0f)
         remember_position();
@@ -668,7 +718,13 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     if (input.is_pressed(Action::confirm))
     {
         touched = true;
-        if (ended_)
+        if (next_countdown_ > 0.0f)
+        {
+            next_countdown_ = 0.0f;
+            next_requested_ = true;
+            next_path_ = folder_videos_[this_video_index_ + 1];
+        }
+        else if (ended_)
         {
             paused_ = false;
             if (player_)
@@ -758,7 +814,11 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     show_picture();
 
     if (!ended_ && engine_->ended() && (!player_ || player_->finished()))
+    {
         ended_ = true;
+        if (indexed_ && this_video_index_ + 1 < folder_videos_.size())
+            next_countdown_ = kNextCountdownSeconds;
+    }
 }
 
 std::span<const ui::Hint> VideoViewer::hints() const
@@ -1015,15 +1075,27 @@ void VideoViewer::draw(ui::Painter &paint, ui::Canvas &canvas, const gfx::Rect &
         ui::text(canvas.list, regular, "Left / right: 0.1 s     Cross: done", box.x + box.w / 2.0f,
                  box.y + 108.0f, 22.0f, ink(kMuted), gfx::Align::center);
     }
+    if (next_countdown_ > 0.0f && this_video_index_ + 1 < folder_videos_.size())
+    {
+        const std::string next_name = file_name(folder_videos_[this_video_index_ + 1]);
+        const std::string label = "Next: " + next_name + " in " +
+                                  std::to_string(static_cast<int>(std::ceil(next_countdown_))) +
+                                  " s";
+        const float panel_w = 700.0f;
+        const gfx::Rect box{area.x + (area.w - panel_w) / 2.0f, area.y + area.h / 2.0f - 70.0f,
+                            panel_w, 140.0f};
+        canvas.list.rounded_rect(box, 16.0f, ink({0.0f, 0.0f, 0.0f, 0.78f}));
+        ui::text(canvas.list, regular, ui::fit_body(paint, label, 30.0f, panel_w - 48.0f),
+                 box.x + box.w / 2.0f, box.y + 62.0f, 30.0f, ink(kWhite), gfx::Align::center);
+        ui::text(canvas.list, regular, "Cross: now     Circle: cancel", box.x + box.w / 2.0f,
+                 box.y + 108.0f, 22.0f, ink(kMuted), gfx::Align::center);
+    }
     menu_.draw(canvas);
 }
 
 Match VideoHandler::match(const FileProbe &probe) const
 {
-    static const char *const kExtensions[] = {"mp4", "m4v", "mkv", "webm", "avi", "mov", "ts",
-                                              "m2ts", "mts", "wmv", "flv", "mpg", "mpeg", "ogv",
-                                              "3gp"};
-    for (const char *ext : kExtensions)
+    for (const char *ext : kVideoExtensions)
         if (probe.ext() == ext)
             return Match::extension;
     if (probe.can_sniff())

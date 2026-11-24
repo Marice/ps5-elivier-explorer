@@ -123,6 +123,10 @@ PS5_HOST=<console address> tools/console-probe.py results/probe-1 safe
 | `decoder-bind` | Calls `sceVideodec2QueryComputeMemoryInfo`, the one read-only function of the library, in a build made with `make HW_DECODE=1` (an import stub of libSceVideodec2 is linked, so that the loader loads the system library at start; D47). Runs alone | If the firmware does not export a name of the stub, the app is refused at start; put the normal build back |
 | `safe` | `memory+upload+egl+decoder-load` | As above |
 | `hdr:pq10`, `hdr:hlg10`, `hdr:fp16` | Does the driver accept a 10-bit or half-float surface in an HDR colour space? Eight brightness steps are shown for 12 s | Closes the display and opens another surface. Runs alone |
+| `convert` | What converting a decoded picture to RGBA16 on the CPU and uploading it costs, in ms, at 1080p and 4K, 8-bit and 10-bit (PQ included), split over 1, 4 and 6 threads (D53, D59) | Nothing; times a conversion and an upload the viewer already does |
+| `hwdec` | Brings `libSceVideodec2` up before the HEN (sysmodule 207, a compute queue, one decoder) and, after it, decodes one keyframe baked into the probe and compares its luma against FFmpeg's decode of the same bytes (D60). Only in a `make HW_DECODE=1` build. Runs alone | Loads the system module and creates a hardware decoder that is never freed (D58) |
+| `speakers` | A tone on each of the eight surround channels in turn (front left, front right, centre, LFE, side left and right, back left and right), 1.5 s each, in the console's channel order (D65). Someone on the receiver says which speaker sounded for each | Opens the eight-channel audio output for the run |
+| `hdr:videoout` | Retypes the OpenGL runtime's own scanout buffers to HDR10 (`--wrap` hooks around its `sceVideoOut*` calls, D68, D71) and draws packed test bars under four byte-order guesses, 10 s each, instead of opening a surface of its own. Runs alone | Changes the running display's pixel format to HDR10 and back; *not* a second `sceVideoOutOpen` (which panics the console) |
 
 Rules that follow from what is not known:
 
@@ -140,6 +144,16 @@ Rules that follow from what is not known:
 - **A failed allocation is an answer.** The ladder stops at the first block that
   does not fit; the report says which. Only `fatal` lines in the log or a crash in
   the kernel log are problems.
+- **`hdr:videoout` hung a start once (D69), before the HDR code had even run.**
+  The cause, as far as it was narrowed down: the `--wrap` hooks around the
+  runtime's own `sceVideoOutClose` took a lock and wrote a trace line while the
+  process was ending, and the console never finished tearing that process down,
+  so the next launch waited behind it ("please wait" on the home screen). The
+  hooks now use plain atomics only and never lock or trace once the app is
+  closing. Confirm two ordinary starts and closes of the build under test
+  before trying this probe, and if a launch ever seems to hang on the splash or
+  the console shows "please wait" for longer than normal, stop and say so
+  rather than relaunching.
 - The request is marked as honoured *before* the probes run, so a probe that
   crashes the app is not run again by the next launch.
 

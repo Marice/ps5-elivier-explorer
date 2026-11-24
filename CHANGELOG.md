@@ -5,6 +5,8 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+## [v00.002.001] - 2026-11-24
+
 ### Changed
 
 - The app now lists under the Media tab instead of Games.

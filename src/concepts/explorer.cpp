@@ -19,6 +19,7 @@
 #include "explorer/guard.hpp"
 #include "explorer/local_source.hpp"
 #include "explorer/pane_model.hpp"
+#include "explorer/access_report.hpp"
 #include "explorer/trace.hpp"
 #include "explorer/worker.hpp"
 #include "ui/components/component.hpp"
@@ -469,9 +470,11 @@ class PaneView
                    paint.page_text_muted());
         if (state.list_error != 0)
         {
-            std::snprintf(line, sizeof(line), "Could not open that folder (error %d)",
-                          state.list_error);
-            paint.body(line, x, area_.y + 80.0f, 18.0f, look.danger);
+            const bool sandboxed =
+                hui::explorer::access_report().route == hui::explorer::AccessRoute::none;
+            const std::string message = pane_error_text(state.list_error, sandboxed);
+            paint.body(ui::fit_body(paint, message, 18.0f, area_.w), x, area_.y + 80.0f, 18.0f,
+                      look.danger);
         }
         else
         {

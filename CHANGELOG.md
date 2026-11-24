@@ -5,6 +5,12 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- When a folder cannot be opened because the console was never unsandboxed (no etaHEN or
+  similar daemon answered), the Files screen now says so and suggests running etaHEN or the
+  Lapy JB Daemon, instead of just showing an errno.
+
 ## [v00.002.000] - 2026-11-23
 
 ### Added

@@ -1,4 +1,4 @@
-// EliVier Explorer - ArchiveSource reading ZIP fixtures through a LocalSource.
+// EliVier Explorer - ArchiveSource reading ZIP and RAR fixtures through a LocalSource.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "explorer/archive_source.hpp"
@@ -144,6 +144,65 @@ TEST(ArchiveSource, ReadsAFileSplitAcrossTwoHandBuiltVolumes)
         EXPECT_EQ(read_whole(*archive, "/a.txt", 28), "the first volume's own file\n");
         EXPECT_EQ(read_whole(*archive, "/b.txt", 29), "the second volume's own file\n");
     }
+}
+
+TEST(ArchiveSource, ReadsARar4ArchiveWithAStoredFileAndAFolder)
+{
+    LocalSource local;
+    std::string error;
+    const auto archive = ArchiveSource::open(local, kDir + "/basic.rar", &error);
+    ASSERT_NE(archive, nullptr) << error;
+    EXPECT_STREQ(archive->kind(), ".rar");
+    EXPECT_EQ(archive->unreadable(), 0);
+
+    const ListResult root = archive->list("/");
+    ASSERT_TRUE(root.ok);
+    const Entry *top = find(root, "top.txt");
+    ASSERT_NE(top, nullptr);
+    EXPECT_EQ(top->modified_unix, 1483228800); // the fixture's packed MS-DOS date/time, by hand
+    const Entry *folder = find(root, "folder");
+    ASSERT_NE(folder, nullptr);
+    EXPECT_EQ(folder->kind, EntryKind::directory);
+
+    EXPECT_EQ(read_whole(*archive, "/top.txt", 21), "top-level file, rar4\n");
+    EXPECT_EQ(read_whole(*archive, "/folder/inside.txt", 25), "a file in a folder, rar4\n");
+}
+
+TEST(ArchiveSource, ReadsARar4FileSplitAcrossTwoOldStyleVolumes)
+{
+    LocalSource local;
+    std::string error;
+    const auto from_rar = ArchiveSource::open(local, kDir + "/split.rar", &error);
+    ASSERT_NE(from_rar, nullptr) << error;
+    const auto from_r00 = ArchiveSource::open(local, kDir + "/split.r00", &error);
+    ASSERT_NE(from_r00, nullptr) << error;
+
+    for (const auto *archive : {from_rar.get(), from_r00.get()})
+    {
+        EXPECT_EQ(archive->unreadable(), 0);
+        EXPECT_EQ(read_whole(*archive, "/movie.bin", 51),
+                 "split across two rar4 volumes, twenty-eight bytes!\n");
+    }
+}
+
+TEST(ArchiveSource, ReadsARar5ArchiveWithAStoredFileAndAFolder)
+{
+    LocalSource local;
+    std::string error;
+    const auto archive = ArchiveSource::open(local, kDir + "/basic5.rar", &error);
+    ASSERT_NE(archive, nullptr) << error;
+    EXPECT_STREQ(archive->kind(), ".rar");
+    EXPECT_EQ(archive->unreadable(), 0);
+
+    const ListResult root = archive->list("/");
+    ASSERT_TRUE(root.ok);
+    const Entry *top = find(root, "top.txt");
+    ASSERT_NE(top, nullptr);
+    EXPECT_EQ(top->modified_unix, 1700000000); // RAR5 mtime is already Unix seconds, no decoding
+    EXPECT_NE(find(root, "folder"), nullptr);
+
+    EXPECT_EQ(read_whole(*archive, "/top.txt", 21), "top-level file, rar5\n");
+    EXPECT_EQ(read_whole(*archive, "/folder/inside.txt", 25), "a file in a folder, rar5\n");
 }
 
 TEST(ArchiveSource, IsNeverPlainAndNeverTheSameDeviceAsAnything)

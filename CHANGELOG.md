@@ -5,6 +5,11 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- "Fill the screen" in the video viewer's Options menu now actually fills it; confirming it
+  (a checkable item) never reached the code that applied it.
+
 ## [v00.002.001] - 2026-11-24
 
 ### Changed

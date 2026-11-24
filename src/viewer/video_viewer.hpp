@@ -69,6 +69,10 @@ class VideoViewer final : public Viewer
     {
         return fill_;
     }
+    const std::string &path() const
+    {
+        return path_;
+    }
     bool hdr_output() const
     {
         return hdr_on_;

@@ -488,6 +488,111 @@ TEST_F(VideoViewerTest, TheSoundTracksCanBeSwitched)
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->engine()->audio_stream() == first; }));
 }
 
+TEST_F(VideoViewerTest, OptionsOpensAMenuThatCircleCancels)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_FALSE(viewer->menu_open());
+    bool offered = false;
+    for (const hui::ui::Hint &hint : viewer->hints())
+        offered = offered || hint.button == hui::ui::Button::options;
+    EXPECT_TRUE(offered);
+    tick(*viewer, press(hui::Action::menu));
+    EXPECT_TRUE(viewer->menu_open());
+    EXPECT_GT(drawn(*viewer), 0u); // the menu draws without NaNs
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_FALSE(viewer->menu_open());
+    EXPECT_FALSE(viewer->closing()); // Circle closed the menu, not the viewer
+}
+
+TEST_F(VideoViewerTest, StartFromTheBeginningForgetsTheResumePositionAndSeeksToZero)
+{
+    hui::viewer::MediaMemory memory;
+    memory_ = &memory;
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 0.3; }));
+    // A position fabricated directly in the store (not what this short clip really reaches):
+    // MediaMemory ignores anything under a minute watched or near the end (D73).
+    memory.remember_position(viewer->path(), 1000.0, 7200.0);
+    ASSERT_GT(memory.resume_at(viewer->path(), 7200.0), 0.0);
+
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, press(hui::Action::confirm)); // the first item: start from the beginning
+    EXPECT_FALSE(viewer->menu_open());
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() < 0.3; }));
+    EXPECT_DOUBLE_EQ(memory.resume_at(viewer->path(), 7200.0), 0.0);
+}
+
+TEST_F(VideoViewerTest, FillTheScreenOnlyAppliesInFullScreenAndTogglesFromTheMenu)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_FALSE(viewer->fill());
+    tick(*viewer, press(hui::Action::north)); // full screen: fill is now offered
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // start, subtitle delay, sound delay, fill
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_TRUE(viewer->fill());
+    EXPECT_TRUE(viewer->menu_open()); // a checkable item does not close the menu
+    EXPECT_GT(drawn(*viewer), 0u);    // the cropped picture still draws cleanly
+    tick(*viewer, press(hui::Action::confirm)); // toggle it back off
+    EXPECT_FALSE(viewer->fill());
+    tick(*viewer, press(hui::Action::back));
+    tick(*viewer, press(hui::Action::north)); // back to the window
+    EXPECT_GT(drawn(*viewer), 0u);
+}
+
+TEST_F(VideoViewerTest, SubtitleDelayShiftsWhenACueShowsAndIsOnlyOfferedWithSubtitlesOn)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/multi-track.mkv", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_DOUBLE_EQ(viewer->subtitle_delay(), 0.0);
+    tick(*viewer, press(hui::Action::west)); // a subtitle track: the menu item is now offered
+
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down)); // subtitle delay is the second item
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open()); // choosing it leaves the menu for the adjust panel
+    for (int i = 0; i < 5; ++i)
+        tick(*viewer, nav(hui::Direction::right)); // +0.1 s each
+    EXPECT_NEAR(viewer->subtitle_delay(), 0.5, 1e-9);
+    tick(*viewer, nav(hui::Direction::left));
+    EXPECT_NEAR(viewer->subtitle_delay(), 0.4, 1e-9);
+    tick(*viewer, press(hui::Action::confirm)); // done adjusting
+    EXPECT_GT(drawn(*viewer), 0u);
+}
+
+TEST_F(VideoViewerTest, SoundDelayShiftsWhichPictureIsShownAndIsNotOfferedWithoutAPlayer)
+{
+    FakeTextures textures;
+    const auto silent = open(kDir + "/h264-aac.mp4", &textures, /*with_mixer=*/false);
+    ASSERT_TRUE(run_until(*silent, [&] { return silent->pictures_shown() >= 1; }, /*audio=*/false));
+    tick(*silent, press(hui::Action::menu));
+    tick(*silent, nav(hui::Direction::down));
+    tick(*silent, nav(hui::Direction::down)); // sound delay is the third item
+    tick(*silent, press(hui::Action::confirm));
+    EXPECT_TRUE(silent->menu_open()); // disabled: no player, so confirm refuses and stays open
+
+    FakeTextures textures2;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures2);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open());
+    tick(*viewer, nav(hui::Direction::right));
+    EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9);
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9); // Circle leaves the value as it was set
+}
+
 TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)
 {
     FakeTextures textures;

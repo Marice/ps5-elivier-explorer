@@ -561,7 +561,10 @@ void VideoViewer::update(const InputFrame &input, float dt, ui::Feedback &feedba
     // The menu has the pad while it is open; Circle closes it, not the film.
     if (menu_.is_open() && engine_)
     {
-        if (menu_.handle(input, feedback) == ui::Event::activated)
+        // A plain item confirms as `activated`; a checkable one (Fill the screen) as `changed`,
+        // with the box already flipped by the menu itself. Either way our own state follows.
+        const ui::Event chosen = menu_.handle(input, feedback);
+        if (chosen == ui::Event::activated || chosen == ui::Event::changed)
             menu_chosen(menu_.items()[static_cast<std::size_t>(menu_.focus())].tag);
         if (player_)
             player_->pump(dt);

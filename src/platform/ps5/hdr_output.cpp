@@ -20,7 +20,7 @@ bool HdrOut::enter()
 {
     if (active_)
         return true;
-    if (!presenter_.prepare(width_, height_))
+    if (!presenter_.prepare(display_.width(), display_.height()))
     {
         explorer::trace("hdr: no target to pack the frame in; staying SDR");
         return false;

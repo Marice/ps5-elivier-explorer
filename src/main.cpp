@@ -373,7 +373,7 @@ int main()
     ps5::SurroundOut surround_out; // opened by a film with surround sound, closed after it
     // HDR10 for an HDR film in full screen (D68, D71): the frame is then packed for the scanout.
     gfx::HdrPresenter hdr_presenter;
-    ps5::HdrOut hdr_out(hdr_presenter, display.width(), display.height());
+    ps5::HdrOut hdr_out(hdr_presenter, display);
     audio_out.start(mixer);
     audio::SoundBank sounds;
     const auto bank = sounds.load(assets + "/audio/sfx");

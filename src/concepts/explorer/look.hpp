@@ -46,4 +46,9 @@ gfx::Rect side_panel(ui::Painter &paint, const gfx::Rect &r);
 // "512 B", "4.2 KB", "512 MB", "1.3 GB", "2.0 TB".
 std::string size_text(std::uint64_t bytes);
 
+// Why a pane could not list a folder. `sandboxed` is true when the app never left its sandbox
+// (no daemon such as etaHEN answered its request): that is the one cause worth explaining, since
+// it looks like a bug but is a missing prerequisite. Anything else keeps the plain errno message.
+std::string pane_error_text(int list_error, bool sandboxed);
+
 } // namespace hui::concepts::explorer

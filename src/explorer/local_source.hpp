@@ -29,6 +29,7 @@ class LocalSource final : public Source
     int remove_directory(const std::string &path) override;
     int copy_file(const std::string &from, const std::string &to, std::size_t chunk,
                   const ProgressFn &on_progress) override;
+    int write_new_file(const std::string &path, std::size_t chunk, const ReadFn &read) override;
 
     bool is_plain_path(const std::string &path) const override;
     bool same_device(const std::string &a, const std::string &b) const override;

@@ -278,6 +278,41 @@ int LocalSource::copy_file(const std::string &from, const std::string &to, std::
     return error;
 }
 
+int LocalSource::write_new_file(const std::string &path, std::size_t chunk, const ReadFn &read)
+{
+    if (chunk == 0)
+        return EINVAL;
+    const int out = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
+    if (out < 0)
+        return errno;
+    ::fchmod(out, 0666); // not narrowed by the umask: the other user must be able to write it
+    std::vector<char> buffer(chunk);
+    int error = 0;
+    for (;;)
+    {
+        const std::int64_t n = read(buffer.data(), chunk);
+        if (n < 0)
+        {
+            error = static_cast<int>(-n);
+            break;
+        }
+        if (n == 0)
+            break;
+        if (!write_all(out, buffer.data(), static_cast<std::size_t>(n)))
+        {
+            error = errno != 0 ? errno : EIO;
+            break;
+        }
+    }
+    if (error == 0 && ::fsync(out) != 0)
+        error = errno;
+    if (::close(out) != 0 && error == 0)
+        error = errno;
+    if (error != 0)
+        ::unlink(path.c_str()); // never leave a half-written file behind
+    return error;
+}
+
 bool LocalSource::is_plain_path(const std::string &path) const
 {
     if (path.empty() || path[0] != '/')

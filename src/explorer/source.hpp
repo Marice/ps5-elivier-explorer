@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -86,12 +87,28 @@ class Source
     // Empty folders only: emptying one first is the engine's job.
     virtual int remove_directory(const std::string &path) = 0;
 
-    // Copies one file, `chunk` bytes at a time, so memory use stays small whatever the size.
-    // on_progress gets the bytes written so far after every chunk; returning false stops the copy
-    // and removes the partial destination (the result is ECANCELED).
+    // Copies one file, `chunk` bytes at a time, so memory use stays small whatever the size. Both
+    // paths are on this same source (an archive is never the destination of one: it has no write
+    // primitives at all). on_progress gets the bytes written so far after every chunk; returning
+    // false stops the copy and removes the partial destination (the result is ECANCELED).
     using ProgressFn = std::function<bool(std::uint64_t copied)>;
     virtual int copy_file(const std::string &from, const std::string &to, std::size_t chunk,
                           const ProgressFn &on_progress) = 0;
+
+    // Creates (or truncates) `path` here and fills it by repeatedly calling `read`, which must
+    // write up to `size` bytes into `buffer` and return how many (0 at the end of the data, or a
+    // negative errno to stop and fail). For copying between two sources of a different kind (an
+    // archive onto a real drive, a drive onto an FTP/SMB share later), where the source side has
+    // no path meaningful to the destination's own copy_file(). `chunk` sizes each read. Returns 0
+    // or an errno, like every other write call here (never negative, unlike `read`'s own return
+    // and unlike `ReadFn`'s). Default: ENOTSUP, for a source nothing is ever written into
+    // (ArchiveSource; a future read-only share).
+    using ReadFn = std::function<std::int64_t(void *buffer, std::size_t size)>;
+    virtual int write_new_file(const std::string & /*path*/, std::size_t /*chunk*/,
+                               const ReadFn & /*read*/)
+    {
+        return ENOTSUP;
+    }
 
     // True when no part of the path is a symbolic link; false when one is, or the path cannot be
     // read. A path through a link can end anywhere, so a changing operation does not trust its

@@ -205,6 +205,38 @@ TEST(ArchiveSource, ReadsARar5ArchiveWithAStoredFileAndAFolder)
     EXPECT_EQ(read_whole(*archive, "/folder/inside.txt", 25), "a file in a folder, rar5\n");
 }
 
+TEST(ArchiveSource, ReadsARar5FileSplitAcrossTwoNewStyleVolumes)
+{
+    LocalSource local;
+    std::string error;
+    const auto from_part1 = ArchiveSource::open(local, kDir + "/basic5.part01.rar", &error);
+    ASSERT_NE(from_part1, nullptr) << error;
+    const auto from_part2 = ArchiveSource::open(local, kDir + "/basic5.part02.rar", &error);
+    ASSERT_NE(from_part2, nullptr) << error;
+
+    for (const auto *archive : {from_part1.get(), from_part2.get()})
+    {
+        // The continuation volume's own header for "movie.bin" (Header flags 0x0008, "continuing
+        // from previous volume") is correctly not a second entry: only the first volume's header
+        // is added, spanning the whole file across both volumes.
+        EXPECT_EQ(archive->unreadable(), 0);
+        EXPECT_EQ(read_whole(*archive, "/movie.bin", 48),
+                 "split across two rar5 volumes, over partNN.rar!\n");
+    }
+}
+
+TEST(ArchiveSource, ARar5SplitThatNeverContinuesIsDroppedNotCrashed)
+{
+    LocalSource local;
+    std::string error;
+    const auto archive = ArchiveSource::open(local, kDir + "/truncated5.rar", &error);
+    ASSERT_NE(archive, nullptr) << error;
+    const ListResult root = archive->list("/");
+    ASSERT_TRUE(root.ok);
+    // The entry promised a continuation that never came: silently left out, not half-added.
+    EXPECT_EQ(find(root, "orphan.bin"), nullptr);
+}
+
 TEST(ArchiveSource, IsNeverPlainAndNeverTheSameDeviceAsAnything)
 {
     LocalSource local;

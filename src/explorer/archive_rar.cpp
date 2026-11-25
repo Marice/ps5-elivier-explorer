@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 namespace hui::explorer
 {
@@ -87,6 +88,8 @@ constexpr std::uint64_t kRar5HeaderTypeMain = 1;
 constexpr std::uint64_t kRar5HeaderTypeFile = 2;
 constexpr std::uint64_t kRar5HeaderFlagExtra = 0x0001;
 constexpr std::uint64_t kRar5HeaderFlagData = 0x0002;
+constexpr std::uint64_t kRar5HeaderFlagContinuesFromPrevious = 0x0008;
+constexpr std::uint64_t kRar5HeaderFlagContinuesInNext = 0x0010;
 constexpr std::uint64_t kRar5FileFlagDirectory = 0x0001;
 constexpr std::uint64_t kRar5FileFlagUnixTime = 0x0002;
 
@@ -410,14 +413,21 @@ bool read_rar5(const FormatReader &reader, const std::vector<std::string> &volum
               const std::vector<std::uint64_t> &volume_sizes, ArchiveBuild &build,
               std::string *error)
 {
-    std::vector<std::uint64_t> volume_preambles(volumes.size(), 0);
-    volume_preambles[0] = kRar5SignatureSize;
-    for (std::size_t i = 1; i < volumes.size(); ++i)
-        if (!rar_volume_preamble(reader.parent, volumes[i], true, &volume_preambles[i]))
-            return (*error = "A damaged volume in this RAR5 set"), false;
-
     VolumeCursor at{0, kRar5SignatureSize};
     int entries_read = 0;
+    // A split entry waiting for its continuation header(s) on a later volume: the growing segment
+    // list, matched to the next header of the same name whose Header flags show it continues from
+    // the previous volume. Only one at a time: a RAR5 archive's own blocks come in file order, so
+    // the previous split entry's last continuation header is always seen before the next entry's
+    // first one.
+    struct PendingSplit
+    {
+        std::string name;
+        std::vector<ArchiveSegment> segments;
+        bool modified_set = false;
+        std::int64_t modified_unix = 0;
+    };
+    std::unique_ptr<PendingSplit> pending;
     // A block's maximum size is documented as fitting in a 3-byte vint (2 MB); read generously.
     constexpr std::size_t kMaxHeaderBytes = 2u * 1024u * 1024u + 64u;
     while (true)
@@ -425,7 +435,21 @@ bool read_rar5(const FormatReader &reader, const std::vector<std::string> &volum
         if (at.volume >= static_cast<int>(volumes.size()))
             break;
         if (at.offset >= volume_sizes[static_cast<std::size_t>(at.volume)])
-            break;
+        {
+            // This volume is exhausted: the next one's own entries start past its signature and
+            // its own Main Archive Header, which the main loop below would otherwise have to skip
+            // one header read at a time (it is read here once, cheaply, since every volume after
+            // the first needs this same jump regardless of what else is going on).
+            const int next_volume = at.volume + 1;
+            if (next_volume >= static_cast<int>(volumes.size()))
+                break;
+            std::uint64_t preamble = 0;
+            if (!rar_volume_preamble(reader.parent, volumes[static_cast<std::size_t>(next_volume)],
+                                     true, &preamble))
+                return (*error = "A damaged volume in this RAR5 set"), false;
+            at = {next_volume, preamble};
+            continue;
+        }
         const std::uint64_t remaining = volume_sizes[static_cast<std::size_t>(at.volume)] - at.offset;
         const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, kMaxHeaderBytes));
         std::vector<std::uint8_t> buffer(want);
@@ -532,29 +556,64 @@ bool read_rar5(const FormatReader &reader, const std::vector<std::string> &volum
             {
                 const bool is_directory = (file_flags & kRar5FileFlagDirectory) != 0;
                 const unsigned method = static_cast<unsigned>((compression_info >> 7) & 0x7);
-                const bool continues_from_before = (header_flags & 0x0008) != 0; // data from a prior volume
-                ArchiveNode node;
-                node.is_folder = is_directory;
-                node.size = unpacked_size;
-                node.modified_unix = modified_unix;
+                const bool continues_from_before =
+                    (header_flags & kRar5HeaderFlagContinuesFromPrevious) != 0;
+                const bool continues_in_next =
+                    (header_flags & kRar5HeaderFlagContinuesInNext) != 0;
                 if (is_directory)
+                {
+                    ArchiveNode node;
+                    node.is_folder = true;
                     archive_add(build, name, std::move(node));
-                else if (method != 0 || continues_from_before)
-                    ++build.unreadable; // compressed, or a later part of a file split before here
+                }
+                else if (continues_from_before)
+                {
+                    // The rest of an already-open split entry: it is never a new one on its own.
+                    // A continuation whose name does not match what is open (a damaged or
+                    // out-of-order archive) leaves that entry incomplete; it is dropped rather
+                    // than guessed at.
+                    if (pending != nullptr && pending->name == name)
+                    {
+                        pending->segments.push_back(
+                            {at.volume, at.offset + header_end, data_size});
+                        if (!continues_in_next)
+                        {
+                            ArchiveNode node;
+                            node.size = unpacked_size;
+                            node.modified_unix =
+                                pending->modified_set ? pending->modified_unix : modified_unix;
+                            node.stored = method == 0;
+                            node.segments = std::move(pending->segments);
+                            if (node.stored)
+                                archive_add(build, pending->name, std::move(node));
+                            else
+                                ++build.unreadable;
+                            pending.reset();
+                        }
+                    }
+                    else
+                        ++build.unreadable;
+                }
+                else if (method != 0)
+                    ++build.unreadable; // compressed: this project does not decompress
+                else if (continues_in_next)
+                {
+                    // The first volume of a split entry: open it and wait for its continuation(s)
+                    // rather than adding it now, since its segments are not complete yet.
+                    pending = std::make_unique<PendingSplit>();
+                    pending->name = name;
+                    pending->modified_set = true;
+                    pending->modified_unix = modified_unix;
+                    pending->segments.push_back({at.volume, at.offset + header_end, data_size});
+                }
                 else
                 {
-                    // data_size is only this header's own data area (this volume's share); a
-                    // stored entry split across volumes has its full length in unpacked_size.
-                    const std::uint64_t data_offset = at.offset + header_end;
-                    node.segments = span_rar_volumes(at.volume, data_offset, unpacked_size,
-                                                     volume_sizes, volume_preambles);
-                    if (node.segments.empty() && data_size > 0)
-                        ++build.unreadable;
-                    else
-                    {
-                        node.stored = true;
-                        archive_add(build, name, std::move(node));
-                    }
+                    ArchiveNode node;
+                    node.size = unpacked_size;
+                    node.modified_unix = modified_unix;
+                    node.stored = true;
+                    node.segments = {{at.volume, at.offset + header_end, data_size}};
+                    archive_add(build, name, std::move(node));
                 }
             }
         }

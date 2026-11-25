@@ -123,10 +123,22 @@ def rar4_split():
 # ---------------------------------------------------------------------------
 # RAR5: a single-volume archive with one stored file and one folder.
 # ---------------------------------------------------------------------------
-def rar5_file_header(name: bytes, data: bytes, directory: bool, extra_flags: int = 0) -> bytes:
+# `data_size` overrides the data area's own declared size (defaults to len(data)): the one field
+# a split entry's own volume gets wrong on purpose, since each volume reports only its own chunk
+# (rarlab.com/technote.htm: Data CRC32 "contains CRC32 of file packed data contained in current
+# volume ... for all file parts except the last" - the same per-volume scoping applies to Data
+# size, the field actually read here). `unpacked_size` overrides the file's own total size, so a
+# continuation volume's header can still carry the entry's full size as its spec requires, not
+# just what is left; `header_flags` lets a split's own continuation bits (0x0008 "continuing from
+# previous volume", 0x0010 "continuing in next volume") be set on top of the default 0x0002 "data
+# area present".
+def rar5_file_header(name: bytes, data: bytes, directory: bool, extra_flags: int = 0,
+                     header_flags: int = None, data_size: int = None,
+                     unpacked_size: int = None) -> bytes:
     file_flags = 0x0001 if directory else 0
     file_flags |= 0x0002  # mtime present
-    unpacked_size = 0 if directory else len(data)
+    if unpacked_size is None:
+        unpacked_size = 0 if directory else len(data)
     attrs = 0
     mtime = struct.pack("<I", 1700000000)
     compression_info = vint(0)  # method = store, version = 0, not solid
@@ -145,18 +157,21 @@ def rar5_file_header(name: bytes, data: bytes, directory: bool, extra_flags: int
     # including the data-size vint, which sits right after header flags, before header-type-
     # specific fields like "file flags" (that order is not negotiable: a reader must consume
     # data-size before it even knows this is a file header).
-    header_flags = 0 if directory else 0x0002  # data area present only for a real file
-    data_size = vint(0 if directory else len(data))
+    if header_flags is None:
+        header_flags = 0 if directory else 0x0002  # data area present only for a real file
+    if data_size is None:
+        data_size = 0 if directory else len(data)
+    data_size_field = vint(data_size)
     type_and_flags = vint(2) + vint(header_flags)
-    payload = type_and_flags + (data_size if not directory else b"") + body
+    payload = type_and_flags + (data_size_field if (header_flags & 0x0002) else b"") + body
     header_size = vint(len(payload))
     header = struct.pack("<I", 0) + header_size + payload
-    return header + (data if not directory else b"")
+    return header + data
 
 
-def rar5_main_header() -> bytes:
-    archive_flags = vint(0)
-    body = archive_flags
+def rar5_main_header(volume_number: int = None) -> bytes:
+    archive_flags = vint(0x0001 if volume_number is not None else 0)  # 0x0001 = "is volume"
+    body = archive_flags + (vint(volume_number) if volume_number is not None else b"")
     type_and_flags = vint(1) + vint(0)
     payload = type_and_flags + body
     header_size = vint(len(payload))
@@ -175,6 +190,54 @@ def rar5_basic():
     print(path)
 
 
+# ---------------------------------------------------------------------------
+# RAR5: new-style multi-volume set (basic5.part01.rar / basic5.part02.rar), one file whose data
+# starts in the first volume (header flags 0x0002 data | 0x0010 continues-in-next) and continues
+# into the second (its own header, same name, header flags 0x0002 data | 0x0008 continues-from-
+# previous; the true unpacked_size is repeated on both, per-volume data_size only on each).
+# ---------------------------------------------------------------------------
+def rar5_split():
+    full_data = b"split across two rar5 volumes, over partNN.rar!\n"
+    part0 = full_data[:30]
+    part1 = full_data[30:]
+    name = b"movie.bin"
+
+    header0 = rar5_file_header(name, part0, False, header_flags=0x0002 | 0x0010,
+                               data_size=len(part0), unpacked_size=len(full_data))
+    path0 = os.path.join(OUT, "basic5.part01.rar")
+    with open(path0, "wb") as f:
+        f.write(RAR5_SIGNATURE)
+        f.write(rar5_main_header())
+        f.write(header0)
+    print(path0)
+
+    header1 = rar5_file_header(name, part1, False, header_flags=0x0002 | 0x0008,
+                               data_size=len(part1), unpacked_size=len(full_data))
+    path1 = os.path.join(OUT, "basic5.part02.rar")
+    with open(path1, "wb") as f:
+        f.write(RAR5_SIGNATURE)
+        f.write(rar5_main_header(volume_number=1))
+        f.write(header1)
+    print(path1)
+
+
+# A RAR5 archive whose one entry promises to continue in a next volume that never comes (a
+# truncated set, or a single file that was never joined to its other parts): the data area here is
+# real, but incomplete.
+def rar5_truncated_split():
+    part0 = b"the rest of this never arrives\n"
+    header = rar5_file_header(b"orphan.bin", part0, False, header_flags=0x0002 | 0x0010,
+                              data_size=len(part0), unpacked_size=len(part0) + 1000)
+    path = os.path.join(OUT, "truncated5.rar")
+    with open(path, "wb") as f:
+        f.write(RAR5_SIGNATURE)
+        f.write(rar5_main_header())
+        f.write(header)
+    print(path)
+
+
 rar4_basic()
 rar4_split()
 rar5_basic()
+rar5_split()
+rar5_truncated_split()

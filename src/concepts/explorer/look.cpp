@@ -92,6 +92,21 @@ std::string size_text(std::uint64_t bytes)
     return hui::explorer::format_bytes(bytes);
 }
 
+std::string speed_text(double bytes_per_second)
+{
+    static const char *const kUnits[] = {"B/s", "KB/s", "MB/s", "GB/s"};
+    double value = bytes_per_second < 0.0 ? 0.0 : bytes_per_second;
+    int unit = 0;
+    while (value >= 1024.0 && unit < 3)
+    {
+        value /= 1024.0;
+        ++unit;
+    }
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.2f %s", value, kUnits[unit]);
+    return text;
+}
+
 std::string pane_error_text(int list_error, bool sandboxed)
 {
     if (list_error != 0 && sandboxed)

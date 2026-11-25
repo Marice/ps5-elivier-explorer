@@ -46,6 +46,10 @@ gfx::Rect side_panel(ui::Painter &paint, const gfx::Rect &r);
 // "512 B", "4.2 KB", "512 MB", "1.3 GB", "2.0 TB".
 std::string size_text(std::uint64_t bytes);
 
+// "4.20 KB/s", "12.50 MB/s", "1.00 GB/s": a running job's transfer rate, always two decimals (a
+// copy/move panel reads better at a steady width than size_text's own one-or-zero-decimal rule).
+std::string speed_text(double bytes_per_second);
+
 // Why a pane could not list a folder. `sandboxed` is true when the app never left its sandbox
 // (no daemon such as etaHEN answered its request): that is the one cause worth explaining, since
 // it looks like a bug but is a missing prerequisite. Anything else keeps the plain errno message.

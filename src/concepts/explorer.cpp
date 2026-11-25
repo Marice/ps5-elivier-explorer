@@ -1005,9 +1005,19 @@ class ExplorerScreen final : public app::Concept
         top.list.shadow(panel, look.radius_card, 24.0f, Color::rgb(0x000000, 0.25f));
         paint.surface(panel, look.radius_card, look.surface, look.outline, 1.0f);
         char line[200];
-        std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s", verb(snap_.kind, false),
-                      snap_.files_done, snap_.files_total, size_text(snap_.bytes_done).c_str(),
-                      size_text(snap_.bytes_total).c_str());
+        // Copy and move alone show a speed (remove has no transfer rate worth reading): only
+        // once a sample exists, so the line does not flash "0.00 B/s" the instant a job starts.
+        const bool show_speed = snap_.kind != JobKind::remove && snap_.state == JobState::running &&
+                                speed_bytes_per_second_ > 0.0;
+        if (show_speed)
+            std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s   %s",
+                          verb(snap_.kind, false), snap_.files_done, snap_.files_total,
+                          size_text(snap_.bytes_done).c_str(), size_text(snap_.bytes_total).c_str(),
+                          speed_text(speed_bytes_per_second_).c_str());
+        else
+            std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s",
+                          verb(snap_.kind, false), snap_.files_done, snap_.files_total,
+                          size_text(snap_.bytes_done).c_str(), size_text(snap_.bytes_total).c_str());
         const float width = kRight - kMargin - 350.0f;
         paint.body(ui::fit_body(paint, line, 20.0f, width), kMargin + 24.0f, kProgressTop + 34.0f,
                    20.0f, look.text);
@@ -1343,6 +1353,9 @@ class ExplorerScreen final : public app::Concept
         job_source_ = active;
         job_active_ = true;
         conflict_answered_ = false;
+        speed_sampled_at_ = clock_;
+        speed_sampled_bytes_ = 0;
+        speed_bytes_per_second_ = 0.0;
         bar_.set_value(0.0f, true);
         cancel_hold_.reset();
         worker_.queue(
@@ -1350,12 +1363,36 @@ class ExplorerScreen final : public app::Concept
             { hui::explorer::run_copy_job(source_, source_, plan, &job_.progress, &job_.mutex); });
     }
 
+    // How often the transfer rate is recomputed: a per-frame byte delta is too small and noisy to
+    // read, so it is only updated every kSpeedSampleSeconds, holding its last value in between.
+    static constexpr float kSpeedSampleSeconds = 0.25f;
+
     // Once a frame while a job runs: take its progress, ask about a conflict, notice the end.
     void poll_job(app::Feedback &feedback)
     {
         {
             std::lock_guard<std::mutex> lock(job_.mutex);
             snap_ = job_.progress;
+        }
+        if (snap_.state == JobState::running)
+        {
+            const float elapsed = clock_ - speed_sampled_at_;
+            if (elapsed >= kSpeedSampleSeconds)
+            {
+                // bytes_done can step backward (copy_job.cpp subtracts an in-flight file's count
+                // when a cancel or a failure stops it mid-copy): treat that as no progress this
+                // sample, not a negative or wrapped rate.
+                const std::uint64_t gained = snap_.bytes_done >= speed_sampled_bytes_
+                                               ? snap_.bytes_done - speed_sampled_bytes_
+                                               : 0;
+                speed_bytes_per_second_ = static_cast<double>(gained) / elapsed;
+                speed_sampled_at_ = clock_;
+                speed_sampled_bytes_ = snap_.bytes_done;
+            }
+        }
+        else
+        {
+            speed_bytes_per_second_ = 0.0;
         }
         if (snap_.state == JobState::waiting_conflict)
         {
@@ -1461,6 +1498,11 @@ class ExplorerScreen final : public app::Concept
     int job_source_ = 0;
     bool conflict_answered_ = false;
     CopyProgress snap_; // the job's progress as of this frame: only the UI thread touches it
+    // Transfer rate, sampled every kSpeedSampleSeconds rather than every frame (a per-frame byte
+    // delta is too noisy to read): the clock_ and bytes_done last sampled, and the rate that gave.
+    float speed_sampled_at_ = 0.0f;
+    std::uint64_t speed_sampled_bytes_ = 0;
+    double speed_bytes_per_second_ = 0.0;
     JobShared job_;
     hui::explorer::JobWorker worker_; // last: joined first, before what its jobs use
 };

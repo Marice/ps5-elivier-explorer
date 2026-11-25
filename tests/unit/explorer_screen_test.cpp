@@ -14,6 +14,10 @@
 #include <memory>
 #include <string>
 
+#ifndef HUI_SOURCE_DIR
+#define HUI_SOURCE_DIR "."
+#endif
+
 namespace
 {
 
@@ -118,6 +122,9 @@ class ExplorerScreenTest : public ConceptFixture
         std::ofstream(root_ + "/a.fake") << "fake content";
         std::ofstream(root_ + "/b.txt") << "plain";
         std::ofstream(root_ + "/c.fake") << "another fake file";
+        // Sorts after the three above: every row-index-based test here still lands where it did.
+        fs::copy_file(std::string(HUI_SOURCE_DIR) + "/tests/fixtures/archives/basic.zip",
+                      root_ + "/d.zip");
         registry_.add(std::make_unique<FakeHandler>());
         hui::concepts::set_explorer_registry(&registry_);
         hui::concepts::set_explorer_start(root_, root_);
@@ -203,6 +210,48 @@ TEST_F(ExplorerScreenTest, AskingToReopenAsAFileNobodyKnowsLeavesNoViewerAtAll)
     EXPECT_EQ(g_seen.closed, 1);
     EXPECT_EQ(g_seen.opened, 1); // the attempt failed: no second open
     expect_drawable(*screen_);   // back to the Files lists, not stuck on a closed viewer
+}
+
+TEST_F(ExplorerScreenTest, CrossOnAZipEntersItAndBackAtItsRootLeavesIt)
+{
+    send(*screen_, nav(hui::Direction::down), 0.0f); // b.txt
+    send(*screen_, nav(hui::Direction::down), 0.0f); // c.fake
+    send(*screen_, nav(hui::Direction::down), 0.0f); // d.zip
+    send(*screen_, press(hui::Action::confirm));     // enters it: no handler is asked
+    EXPECT_EQ(g_seen.opened, 0);
+    expect_drawable(*screen_); // the archive's own rows, not a viewer
+
+    // basic.zip's own content: top.txt, then the "folder" directory (dirs-first sorting puts it
+    // first); neither has a handler for ".fake"/".txt", nor would one be looked for, since
+    // viewing a file still inside an archive is out of this round's scope (D77/D86 follow-up).
+    send(*screen_, press(hui::Action::confirm)); // "folder": a real subfolder inside the archive
+    expect_drawable(*screen_);
+    send(*screen_, press(hui::Action::back)); // out of "folder", still inside the archive
+    expect_drawable(*screen_);
+
+    send(*screen_, press(hui::Action::back)); // at the archive's root: leaves it
+    expect_drawable(*screen_);
+    EXPECT_EQ(g_seen.opened, 0); // nothing was ever opened as a viewer through any of this
+
+    // Back on the real folder behaves normally again: one more Back does nothing (already at the
+    // fixture's own root), proving the pane is truly back on the real Source, not still looking
+    // like it succeeded inside the (by now gone) archive handle.
+    send(*screen_, press(hui::Action::back));
+    expect_drawable(*screen_);
+}
+
+TEST_F(ExplorerScreenTest, CrossOnADamagedArchiveToastsAndLeavesThePaneWhereItWas)
+{
+    std::ofstream(root_ + "/e.zip") << "not actually a zip file";
+    hui::concepts::set_explorer_start(root_, root_);
+    screen_ = hui::concepts::make_explorer(context_);
+    screen_->enter();
+    send(*screen_, idle(), 0.5f);
+    for (int i = 0; i < 4; ++i) // a.fake, b.txt, c.fake, d.zip -> e.zip
+        send(*screen_, nav(hui::Direction::down), 0.0f);
+    send(*screen_, press(hui::Action::confirm));
+    EXPECT_EQ(g_seen.opened, 0);
+    expect_drawable(*screen_); // still the lists: the bad archive refused, nothing crashed
 }
 
 TEST_F(ExplorerScreenTest, ALongNameDrawsWhileItScrolls)

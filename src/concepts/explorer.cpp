@@ -15,6 +15,7 @@
 #include "concepts/explorer/row_format.hpp"
 #include "core/held_step.hpp"
 #include "core/tween.hpp"
+#include "explorer/archive_source.hpp"
 #include "explorer/copy_job.hpp"
 #include "explorer/guard.hpp"
 #include "explorer/local_source.hpp"
@@ -48,6 +49,7 @@ namespace
 using gfx::Color;
 using gfx::Rect;
 using namespace explorer;
+using hui::explorer::ArchiveSource;
 using hui::explorer::ConflictPolicy;
 using hui::explorer::CopyPlan;
 using hui::explorer::CopyProgress;
@@ -264,6 +266,32 @@ const char *key_name(SortKey key)
     return "";
 }
 
+// ".zip", ".rar" (plain or ".partNNN.rar"), ".zNN", ".rNN": whether Cross on this name should
+// open it as a folder (an archive) instead of asking the viewer registry for a handler. Matches
+// loosely on purpose (the exact volume-numbering rules live in archive_source.cpp); a name that
+// looks like a RAR/ZIP volume but turns out damaged still fails with a clear message from
+// ArchiveSource::open(), not a wrong handler silently taking the file instead.
+bool looks_like_archive(const std::string &name)
+{
+    std::string low = name;
+    for (char &c : low)
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    const auto ends_with = [&low](const std::string &suffix) {
+        return low.size() >= suffix.size() &&
+              low.compare(low.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    if (ends_with(".zip") || ends_with(".rar"))
+        return true;
+    // ".zNN" / ".rNN": exactly two digits after the dot.
+    const std::size_t dot = low.rfind('.');
+    if (dot != std::string::npos && low.size() - dot == 4 &&
+        (low[dot + 1] == 'z' || low[dot + 1] == 'r') &&
+        low[dot + 2] >= '0' && low[dot + 2] <= '9' && low[dot + 3] >= '0' && low[dot + 3] <= '9')
+        return true;
+    return false;
+}
+
 // What an errno means to the player.
 const char *describe_error(int error)
 {
@@ -429,6 +457,18 @@ class PaneView
             }
             else if (focused != nullptr && model.enter(focused->name))
                 refresh(true);
+            else if (focused != nullptr && focused->kind != EntryKind::directory &&
+                    looks_like_archive(focused->name))
+            {
+                std::string error;
+                if (enter_archive(PaneModel::join(state.path, focused->name), &error))
+                    feedback.play(audio::Cue::select);
+                else
+                {
+                    archive_error = error;
+                    feedback.play(audio::Cue::error);
+                }
+            }
             else if (focused != nullptr && focused->kind != EntryKind::directory)
                 open_request = focused->name; // a file: the screen picks its handler
             else if (focused != nullptr && focused->kind == EntryKind::directory)
@@ -436,7 +476,9 @@ class PaneView
         }
         else if (input.is_pressed(Action::back))
         {
-            if (model.go_up())
+            if (in_archive() && leave_archive())
+                feedback.play(audio::Cue::back);
+            else if (model.go_up())
                 refresh(true);
             else
                 feedback.play(audio::Cue::error);
@@ -522,6 +564,48 @@ class PaneView
 
     // The file a Cross press asked to open (the screen reads and clears it), else empty.
     std::string open_request;
+    // Set when enter_archive() just failed (the screen reads and clears it, toasts it), else
+    // empty.
+    std::string archive_error;
+
+    // True once this pane is inside an opened archive (one level: the archive itself never holds
+    // another one, per D77's block B scope). Back at the archive's own root restores outside_.
+    bool in_archive() const
+    {
+        return archive_ != nullptr;
+    }
+
+    // Cross on an entry that looks like a ZIP/RAR volume: opens it in place of the real source,
+    // remembering where to return to. False (with a toast through the caller) on a damaged or
+    // unrecognised archive; the pane is left exactly where it was.
+    bool enter_archive(const std::string &path, std::string *error)
+    {
+        auto opened = ArchiveSource::open(model.source(), path, error);
+        if (opened == nullptr)
+            return false;
+        outside_source_ = &model.source();
+        outside_path_ = model.state().path;
+        archive_ = std::move(opened);
+        model.set_source(*archive_);
+        model.go_to("/");
+        refresh(true);
+        return true;
+    }
+
+    // Back at an archive's root: returns the pane to the real source and folder it was showing
+    // before enter_archive(). Does nothing (and returns false) anywhere else; the caller's normal
+    // go_up() handles every other Back press.
+    bool leave_archive()
+    {
+        if (archive_ == nullptr || model.state().path != "/")
+            return false;
+        model.set_source(*outside_source_);
+        model.go_to(outside_path_);
+        archive_.reset();
+        outside_source_ = nullptr;
+        refresh(true);
+        return true;
+    }
 
     // Once a frame: how long the focused row has stayed focused, for the scrolling name.
     void tick(float dt, bool active)
@@ -550,6 +634,11 @@ class PaneView
     ui::Table table;
 
   private:
+    // Set only while in_archive(): where and what to return to on leave_archive().
+    std::unique_ptr<ArchiveSource> archive_;
+    hui::explorer::Source *outside_source_ = nullptr;
+    std::string outside_path_;
+
     void draw_name_cell(ui::Canvas &canvas, const Rect &cell, const ui::TableRow &row) const
     {
         const Entry *entry = model.entry_at(row.tag);
@@ -765,6 +854,12 @@ class ExplorerScreen final : public app::Concept
                 const std::string name = pane.open_request;
                 pane.open_request.clear();
                 open_file(active, name, nullptr);
+            }
+            if (!pane.archive_error.empty())
+            {
+                toasts_.push(ui::StatusKind::danger, "Could not open that archive",
+                            pane.archive_error);
+                pane.archive_error.clear();
             }
             const ui::Event event = pane.move(input, feedback);
             // Past a table's edge: the focus crosses the split (or is refused where there is no

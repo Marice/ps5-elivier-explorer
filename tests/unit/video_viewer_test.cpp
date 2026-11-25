@@ -334,8 +334,14 @@ TEST_F(VideoViewerTest, CrossPausesAndResumes)
 
 TEST_F(VideoViewerTest, PlaysToTheEndAndCrossStartsOver)
 {
+    // Alone in its folder, so there is no next episode to count down to: Cross after the end
+    // restarts this film, not something else.
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-alone-test";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "film.mp4");
     FakeTextures textures;
-    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    const auto viewer = open((folder / "film.mp4").string(), &textures);
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
     EXPECT_FALSE(viewer->playing());
     EXPECT_GT(drawn(*viewer), 0u); // "Ended" with the bar up
@@ -343,6 +349,7 @@ TEST_F(VideoViewerTest, PlaysToTheEndAndCrossStartsOver)
     EXPECT_FALSE(viewer->ended());
     EXPECT_TRUE(run_until(
         *viewer, [&] { return viewer->position() > 0.2 && viewer->position() < 1.0; }));
+    fs::remove_all(folder);
 }
 
 TEST_F(VideoViewerTest, TheDpadSeeksAndTheClockFollows)
@@ -486,6 +493,231 @@ TEST_F(VideoViewerTest, TheSoundTracksCanBeSwitched)
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->engine()->audio_stream() != first; }));
     tick(*viewer, press(hui::Action::page_prev));
     ASSERT_TRUE(run_until(*viewer, [&] { return viewer->engine()->audio_stream() == first; }));
+}
+
+TEST_F(VideoViewerTest, OptionsOpensAMenuThatCircleCancels)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_FALSE(viewer->menu_open());
+    bool offered = false;
+    for (const hui::ui::Hint &hint : viewer->hints())
+        offered = offered || hint.button == hui::ui::Button::options;
+    EXPECT_TRUE(offered);
+    tick(*viewer, press(hui::Action::menu));
+    EXPECT_TRUE(viewer->menu_open());
+    EXPECT_GT(drawn(*viewer), 0u); // the menu draws without NaNs
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_FALSE(viewer->menu_open());
+    EXPECT_FALSE(viewer->closing()); // Circle closed the menu, not the viewer
+}
+
+TEST_F(VideoViewerTest, StartFromTheBeginningForgetsTheResumePositionAndSeeksToZero)
+{
+    hui::viewer::MediaMemory memory;
+    memory_ = &memory;
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 0.3; }));
+    // A position fabricated directly in the store (not what this short clip really reaches):
+    // MediaMemory ignores anything under a minute watched or near the end (D73).
+    memory.remember_position(viewer->path(), 1000.0, 7200.0);
+    ASSERT_GT(memory.resume_at(viewer->path(), 7200.0), 0.0);
+
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, press(hui::Action::confirm)); // the first item: start from the beginning
+    EXPECT_FALSE(viewer->menu_open());
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() < 0.3; }));
+    EXPECT_DOUBLE_EQ(memory.resume_at(viewer->path(), 7200.0), 0.0);
+}
+
+TEST_F(VideoViewerTest, FillTheScreenOnlyAppliesInFullScreenAndTogglesFromTheMenu)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_FALSE(viewer->fill());
+    tick(*viewer, press(hui::Action::north)); // full screen: fill is now offered
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // start, chapters, subtitle delay, sound delay, fill
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_TRUE(viewer->fill());
+    EXPECT_TRUE(viewer->menu_open()); // a checkable item does not close the menu
+    EXPECT_GT(drawn(*viewer), 0u);    // the cropped picture still draws cleanly
+    tick(*viewer, press(hui::Action::confirm)); // toggle it back off
+    EXPECT_FALSE(viewer->fill());
+    tick(*viewer, press(hui::Action::back));
+    tick(*viewer, press(hui::Action::north)); // back to the window
+    EXPECT_GT(drawn(*viewer), 0u);
+}
+
+TEST_F(VideoViewerTest, SubtitleDelayShiftsWhenACueShowsAndIsOnlyOfferedWithSubtitlesOn)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/multi-track.mkv", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    EXPECT_DOUBLE_EQ(viewer->subtitle_delay(), 0.0);
+    tick(*viewer, press(hui::Action::west)); // a subtitle track: the menu item is now offered
+
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // subtitle delay is the third item (after chapters)
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open()); // choosing it leaves the menu for the adjust panel
+    for (int i = 0; i < 5; ++i)
+        tick(*viewer, nav(hui::Direction::right)); // +0.1 s each
+    EXPECT_NEAR(viewer->subtitle_delay(), 0.5, 1e-9);
+    tick(*viewer, nav(hui::Direction::left));
+    EXPECT_NEAR(viewer->subtitle_delay(), 0.4, 1e-9);
+    tick(*viewer, press(hui::Action::confirm)); // done adjusting
+    EXPECT_GT(drawn(*viewer), 0u);
+}
+
+TEST_F(VideoViewerTest, SoundDelayShiftsWhichPictureIsShownAndIsNotOfferedWithoutAPlayer)
+{
+    FakeTextures textures;
+    const auto silent = open(kDir + "/h264-aac.mp4", &textures, /*with_mixer=*/false);
+    ASSERT_TRUE(run_until(*silent, [&] { return silent->pictures_shown() >= 1; }, /*audio=*/false));
+    tick(*silent, press(hui::Action::menu));
+    tick(*silent, nav(hui::Direction::down));
+    tick(*silent, nav(hui::Direction::down));
+    tick(*silent, nav(hui::Direction::down)); // sound delay is the fourth item (after chapters)
+    tick(*silent, press(hui::Action::confirm));
+    EXPECT_TRUE(silent->menu_open()); // disabled: no player, so confirm refuses and stays open
+
+    FakeTextures textures2;
+    const auto viewer = open(kDir + "/h264-aac.mp4", &textures2);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open());
+    tick(*viewer, nav(hui::Direction::right));
+    EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9);
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_NEAR(viewer->sound_delay(), 0.1, 1e-9); // Circle leaves the value as it was set
+}
+
+TEST_F(VideoViewerTest, ChaptersAreNotOfferedWithoutThemAndSeekWhenChosen)
+{
+    FakeTextures plain_textures;
+    const auto plain = open(kDir + "/h264-aac.mp4", &plain_textures);
+    ASSERT_TRUE(run_until(*plain, [&] { return plain->pictures_shown() >= 1; }));
+    tick(*plain, press(hui::Action::menu));
+    tick(*plain, nav(hui::Direction::down)); // Chapters is the second item
+    tick(*plain, press(hui::Action::confirm));
+    EXPECT_TRUE(plain->menu_open()); // disabled: no chapters in this file, confirm refuses
+
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/chapters.mkv", &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm)); // open the chapter list
+    EXPECT_TRUE(viewer->menu_open());
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, nav(hui::Direction::down)); // the third chapter, "Credits" at 1.2 s
+    tick(*viewer, press(hui::Action::confirm));
+    EXPECT_FALSE(viewer->menu_open());
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->position() > 1.0; }));
+    EXPECT_NEAR(viewer->position(), 1.2, 0.2);
+}
+
+TEST_F(VideoViewerTest, CircleOnTheChapterListGoesBackToTheMainMenuNotOutOfIt)
+{
+    FakeTextures textures;
+    const auto viewer = open(kDir + "/chapters.mkv", &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->pictures_shown() >= 1; }));
+    tick(*viewer, press(hui::Action::menu));
+    tick(*viewer, nav(hui::Direction::down));
+    tick(*viewer, press(hui::Action::confirm)); // the chapter list
+    EXPECT_TRUE(viewer->menu_open());
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_TRUE(viewer->menu_open()); // back at the main menu, not closed
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_FALSE(viewer->menu_open()); // this time it closes
+}
+
+// Two short clips, named so natural order is unambiguous: episode1 before episode2.
+fs::path make_episode_folder()
+{
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-episodes-test";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "episode1.mp4");
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "episode2.mp4");
+    return folder;
+}
+
+TEST_F(VideoViewerTest, TheCountdownEndsByReplacingThisViewerWithTheNextEpisode)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(viewer->error().empty()) << viewer->error();
+    EXPECT_EQ(viewer->reopen_as(), nullptr);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    EXPECT_EQ(viewer->reopen_as(), nullptr); // the countdown just started
+    EXPECT_TRUE(run_until(*viewer, [&] { return viewer->reopen_as() != nullptr; }));
+    EXPECT_EQ(*viewer->reopen_as(), (folder / "episode2.mp4").string());
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, CrossDuringTheCountdownAdvancesAtOnce)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    tick(*viewer, press(hui::Action::confirm));
+    ASSERT_NE(viewer->reopen_as(), nullptr);
+    EXPECT_EQ(*viewer->reopen_as(), (folder / "episode2.mp4").string());
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, CircleDuringTheCountdownCancelsItAndStaysOnTheEndedScreen)
+{
+    const fs::path folder = make_episode_folder();
+    FakeTextures textures;
+    const auto viewer = open((folder / "episode1.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    tick(*viewer, press(hui::Action::back));
+    EXPECT_EQ(viewer->reopen_as(), nullptr);
+    EXPECT_TRUE(viewer->ended());
+    EXPECT_FALSE(viewer->closing()); // Circle cancelled the countdown, it did not leave the viewer
+    // It really is cancelled, not just paused: waiting again never fires it on its own.
+    for (int i = 0; i < 400; ++i)
+    {
+        tick(*viewer);
+        ASSERT_EQ(viewer->reopen_as(), nullptr) << "frame " << i;
+    }
+    fs::remove_all(folder);
+}
+
+TEST_F(VideoViewerTest, WithoutANextVideoNothingCountsDownAndDrawingStaysClean)
+{
+    // Alone in its folder, as the Cross-starts-over test above is.
+    const fs::path folder = fs::temp_directory_path() / "hui-video-viewer-alone-test2";
+    fs::remove_all(folder);
+    fs::create_directories(folder);
+    fs::copy_file(kDir + "/h264-aac.mp4", folder / "film.mp4");
+    FakeTextures textures;
+    const auto viewer = open((folder / "film.mp4").string(), &textures);
+    ASSERT_TRUE(run_until(*viewer, [&] { return viewer->ended(); }));
+    for (int i = 0; i < 60; ++i)
+    {
+        tick(*viewer);
+        ASSERT_EQ(viewer->reopen_as(), nullptr) << "frame " << i;
+    }
+    EXPECT_GT(drawn(*viewer), 0u); // the "Ended" bar, no countdown panel to go with it
+    fs::remove_all(folder);
 }
 
 TEST_F(VideoViewerTest, TheHintsFollowWhatTheFileOffers)

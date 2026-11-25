@@ -1,6 +1,7 @@
 // EliVier Explorer - The copy, move and delete engine, on temporary folders.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "explorer/archive_source.hpp"
 #include "explorer/copy_job.hpp"
 #include "explorer/local_source.hpp"
 
@@ -14,12 +15,17 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+#ifndef HUI_SOURCE_DIR
+#define HUI_SOURCE_DIR "."
+#endif
 
 namespace
 {
@@ -639,6 +645,95 @@ TEST_F(CopyJobTest, ACancelBeforeItStartsStopsItAtOnce)
     run_copy_job(source_, source_, plan(JobKind::copy, {"game"}), &progress, &mutex, 1024);
     EXPECT_EQ(progress.state, JobState::cancelled);
     EXPECT_FALSE(fs::exists(root_ + "/to/game"));
+}
+
+class CrossKindCopyTest : public ::testing::Test
+{
+  protected:
+    void SetUp() override
+    {
+        root_ = (fs::temp_directory_path() / "elivier-cross-kind-job").string();
+        fs::remove_all(root_);
+        fs::create_directories(root_);
+        change_policy().allow_also(root_);
+        std::string error;
+        archive_ = ArchiveSource::open(
+            local_, std::string(HUI_SOURCE_DIR) + "/tests/fixtures/archives/basic.zip", &error);
+        ASSERT_NE(archive_, nullptr) << error;
+    }
+    void TearDown() override
+    {
+        change_policy().clear_extra();
+        fs::remove_all(root_);
+    }
+    CopyProgress run(Source &from, Source &to, const CopyPlan &p, std::size_t chunk = 1024)
+    {
+        CopyProgress progress;
+        std::mutex mutex;
+        run_copy_job(from, to, p, &progress, &mutex, chunk);
+        return progress;
+    }
+    std::string root_;
+    LocalSource local_;
+    std::unique_ptr<ArchiveSource> archive_;
+};
+
+TEST_F(CrossKindCopyTest, CopiesAFileOutOfAnArchiveOntoTheRealDisk)
+{
+    CopyPlan p;
+    p.kind = JobKind::copy;
+    p.names = {"top.txt"};
+    p.from_dir = "/";
+    p.to_dir = root_;
+    const CopyProgress result = run(*archive_, local_, p);
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_EQ(result.failed, 0);
+    EXPECT_EQ(read_all(root_ + "/top.txt"), "top-level file\n");
+    EXPECT_FALSE(fs::exists(root_ + "/top.txt.elivier-part"));
+}
+
+TEST_F(CrossKindCopyTest, CopiesAWholeFolderOutOfAnArchive)
+{
+    CopyPlan p;
+    p.kind = JobKind::copy;
+    p.names = {"folder"};
+    p.from_dir = "/";
+    p.to_dir = root_;
+    const CopyProgress result = run(*archive_, local_, p);
+    EXPECT_EQ(result.state, JobState::done);
+    EXPECT_EQ(result.failed, 0);
+    EXPECT_EQ(read_all(root_ + "/folder/inside.txt"), "a file in a folder\n");
+    EXPECT_EQ(read_all(root_ + "/folder/nested/deep.txt"), "two folders deep\n");
+}
+
+TEST_F(CrossKindCopyTest, MovingOutOfAnArchiveIsRefused)
+{
+    CopyPlan p;
+    p.kind = JobKind::move;
+    p.names = {"top.txt"};
+    p.from_dir = "/";
+    p.to_dir = root_;
+    const CopyProgress result = run(*archive_, local_, p);
+    // Refused before the cross-kind check is even reached: an archive is never "changeable"
+    // (is_plain_path() always false, D83), and a move always touches its source.
+    EXPECT_EQ(result.last_error, EPERM);
+    EXPECT_FALSE(fs::exists(root_ + "/top.txt"));
+}
+
+TEST_F(CrossKindCopyTest, ACancelMidCopyLeavesNoPartialFile)
+{
+    CopyPlan p;
+    p.kind = JobKind::copy;
+    p.names = {"top.txt"};
+    p.from_dir = "/";
+    p.to_dir = root_;
+    CopyProgress progress;
+    std::mutex mutex;
+    request_cancel(&progress, &mutex);
+    run_copy_job(*archive_, local_, p, &progress, &mutex, 1024);
+    EXPECT_EQ(progress.state, JobState::cancelled);
+    EXPECT_FALSE(fs::exists(root_ + "/top.txt"));
+    EXPECT_FALSE(fs::exists(root_ + "/top.txt.elivier-part"));
 }
 
 } // namespace

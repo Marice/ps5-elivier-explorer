@@ -49,6 +49,13 @@ class VideoViewer final : public Viewer
     {
         return closing_;
     }
+    // Non-null once the next video in the folder should replace this one (chosen from the
+    // end-of-film countdown, or Cross while it shows): the screen closes this viewer and opens
+    // that path instead, the same way it opens any file (D77).
+    const std::string *reopen_as() const override
+    {
+        return next_requested_ ? &next_path_ : nullptr;
+    }
     bool fullscreen() const override
     {
         return fullscreen_;
@@ -68,6 +75,10 @@ class VideoViewer final : public Viewer
     bool fill() const
     {
         return fill_;
+    }
+    const std::string &path() const
+    {
+        return path_;
     }
     bool hdr_output() const
     {
@@ -127,7 +138,7 @@ class VideoViewer final : public Viewer
     gfx::Color ink(gfx::Color colour) const; // a colour drawn over the film, as the display reads it
     void sync_hdr();
     void open_menu(ui::Feedback &feedback);
-    void menu_chosen(int tag);
+    void menu_chosen(int tag, ui::Feedback &feedback);
     bool handle_adjust(const InputFrame &input);
     void remember_position();
     void show_note(std::string text);
@@ -168,6 +179,16 @@ class VideoViewer final : public Viewer
     double subtitle_delay_ = 0.0;  // seconds the subtitles come later (negative: earlier)
     double sound_delay_ = 0.0;     // seconds the sound comes later than the picture
     bool fill_ = false;            // full screen covered, the picture cropped
+    bool showing_chapters_ = false; // the menu shows the chapter list instead of its usual items
+    // Next episode (D77): every video in the folder, naturally ordered, and where this one is in
+    // it; absent when the folder could not be listed or this file was not found in its own
+    // listing (an odd source, or it was renamed from under the viewer).
+    std::vector<std::string> folder_videos_;
+    bool indexed_ = false;
+    std::size_t this_video_index_ = 0;
+    float next_countdown_ = 0.0f; // >0: the panel counts down to playing the next video
+    bool next_requested_ = false;
+    std::string next_path_;
     HeldStep jump_;                // L2/R2: a minute back or forward, faster while held
     int jump_repeats_ = 0;
     HdrOutput *hdr_ = nullptr; // the display's HDR10 mode, when there is one

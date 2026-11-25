@@ -28,11 +28,27 @@ A short film made of a pattern and a tone.
 The subtitles are a track inside the file.
 LINES
 
+cat >"$temporary/chapters.txt" <<'EOF'
+;FFMETADATA1
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=3000
+title=First half
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=3000
+END=6000
+title=Second half
+EOF
+
 ffmpeg -hide_banner -loglevel error -y \
     -f lavfi -i "testsrc2=size=960x540:rate=24:duration=6" \
     -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=6" \
-    -i "$temporary/lines.srt" \
-    -map 0:v -map 1:a -map 2:s \
+    -i "$temporary/lines.srt" -i "$temporary/chapters.txt" \
+    -map_metadata 3 -map 0:v -map 1:a -map 2:s \
     -c:v libx264 -preset veryfast -crf 30 -g 24 -pix_fmt yuv420p \
     -c:a aac -b:a 64k -c:s srt -metadata:s:a:0 language=eng -metadata:s:s:0 language=eng \
     "$out"

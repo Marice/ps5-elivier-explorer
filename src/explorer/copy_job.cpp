@@ -51,7 +51,10 @@ class Engine
               plan_.kind == JobKind::copy ? "copy"
                                           : (plan_.kind == JobKind::move ? "move" : "delete"),
               plan_.names.size(), plan_.from_dir.c_str(), plan_.to_dir.c_str());
-        if (plan_.kind != JobKind::remove && !from_.same_kind(to_))
+        // A move is always same-source (rename()); only a copy can cross into a different kind of
+        // Source (an archive onto a real drive, a drive onto an FTP/SMB share later), read out
+        // through read_range() and written in through the destination's write_new_file().
+        if (plan_.kind == JobKind::move && !from_.same_kind(to_))
         {
             fail(ENOTSUP, plan_.to_dir);
             fatal_ = true;
@@ -363,14 +366,46 @@ class Engine
         }
         const std::string part = dst + kPartSuffix;
         std::uint64_t last = 0;
-        int error = to_.copy_file(src, part, chunk_,
-                                  [this, &last](std::uint64_t copied)
-                                  {
-                                      std::lock_guard<std::mutex> lock(*mutex_);
-                                      progress_->bytes_done += copied - last;
-                                      last = copied;
-                                      return progress_->state != JobState::cancelled;
-                                  });
+        const auto track_progress = [this, &last](std::uint64_t copied)
+        {
+            std::lock_guard<std::mutex> lock(*mutex_);
+            progress_->bytes_done += copied - last;
+            last = copied;
+            return progress_->state != JobState::cancelled;
+        };
+        int error;
+        if (from_.same_kind(to_))
+            error = to_.copy_file(src, part, chunk_, track_progress);
+        else
+        {
+            // from_ has no path meaningful to to_'s own copy_file() (an archive's "path" is only
+            // ever valid through the archive itself): read through from_.read_range() instead, and
+            // hand the bytes to to_.write_new_file() as they come. Cancelling here still finishes
+            // the current read() call before write_new_file() notices (ReadFn has no cancel slot
+            // of its own); a bounded single-chunk delay, the same as copy_file()'s own granularity.
+            std::uint64_t offset = 0;
+            bool cancelled = false;
+            error = to_.write_new_file(
+                part, chunk_,
+                [this, &src, &offset, &cancelled, &track_progress](void *buffer,
+                                                                    std::size_t size) -> std::int64_t
+                {
+                    if (cancelled)
+                        return 0;
+                    const std::int64_t got = from_.read_range(src, offset, buffer, size);
+                    if (got <= 0)
+                        return got;
+                    offset += static_cast<std::uint64_t>(got);
+                    if (!track_progress(offset))
+                    {
+                        cancelled = true;
+                        return 0; // write_new_file() sees a clean end; the error surfaces below
+                    }
+                    return got;
+                });
+            if (error == 0 && cancelled)
+                error = ECANCELED;
+        }
         if (error != 0)
         {
             {

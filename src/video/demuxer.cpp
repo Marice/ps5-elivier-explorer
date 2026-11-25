@@ -181,6 +181,20 @@ struct Demuxer::Impl
             }
             info.streams.push_back(item);
         }
+        const unsigned int chapter_count = std::min<unsigned int>(
+            format->nb_chapters, static_cast<unsigned int>(kMaxChapters));
+        for (unsigned int i = 0; i < chapter_count; ++i)
+        {
+            const AVChapter &chapter = *format->chapters[i];
+            Chapter item;
+            item.start =
+                static_cast<double>(chapter.start) * av_q2d(chapter.time_base) - start_offset;
+            item.title = dictionary_value(chapter.metadata, "title");
+            info.chapters.push_back(std::move(item));
+        }
+        // By start time, in case the file does not list them in order already.
+        std::stable_sort(info.chapters.begin(), info.chapters.end(),
+                         [](const Chapter &a, const Chapter &b) { return a.start < b.start; });
     }
 };
 

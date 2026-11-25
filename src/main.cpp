@@ -54,6 +54,7 @@
 
 extern "C" void hui_heap_stats(std::size_t *live_bytes, std::size_t *peak_bytes,
                                std::size_t *blocks, std::size_t *failures);
+extern "C" std::size_t hui_heap_capacity(int *direct);
 
 namespace
 {
@@ -299,7 +300,7 @@ int main()
         ps5::hw_video_bring_up();
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
-    explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);
+    explorer::AccessReport access = ps5::hen_free(4, kInstallFolder);
     sys::log("[EXPLORER] access %s in %d ms, uid %d to %d, /app0 %d",
              explorer::route_name(access.route), access.milliseconds, access.uid_before,
              access.uid_after, access.app_folder ? 1 : 0);
@@ -307,6 +308,12 @@ int main()
         g_app_folder = kInstallFolder;
     explorer::trace("access %s, /app0 %d; app files from %s", explorer::route_name(access.route),
                     access.app_folder ? 1 : 0, g_app_folder.c_str());
+    {
+        int direct = 0;
+        const std::size_t capacity = hui_heap_capacity(&direct);
+        explorer::trace("heap: %zu MiB, %s", capacity >> 20,
+                        direct ? "direct memory" : "flexible memory (the smaller fallback)");
+    }
     explorer::set_access_report(std::move(access));
     const std::string assets = g_app_folder + "/assets";
     sys::log("[HUI] storage dir=%d", save::ensure_directory(kDataRoot) ? 1 : 0);
@@ -373,7 +380,7 @@ int main()
     ps5::SurroundOut surround_out; // opened by a film with surround sound, closed after it
     // HDR10 for an HDR film in full screen (D68, D71): the frame is then packed for the scanout.
     gfx::HdrPresenter hdr_presenter;
-    ps5::HdrOut hdr_out(hdr_presenter, display.width(), display.height());
+    ps5::HdrOut hdr_out(hdr_presenter, display);
     audio_out.start(mixer);
     audio::SoundBank sounds;
     const auto bank = sounds.load(assets + "/audio/sfx");

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "gfx/hdr_presenter.hpp"
+#include "platform/ps5/display_egl.hpp"
 #include "viewer/viewer.hpp"
 
 namespace hui::ps5
@@ -18,8 +19,13 @@ namespace hui::ps5
 class HdrOut final : public viewer::HdrOutput
 {
   public:
-    HdrOut(gfx::HdrPresenter &presenter, int width, int height)
-        : presenter_(presenter), width_(width), height_(height)
+    // `display` must outlive this: its width()/height() are read live in enter(), not captured
+    // once, because the saved resolution can change (1080p, 1440p, 2160p) between runs and a
+    // stale size here would let the readiness check pass at the old size while the per-frame
+    // presenter (sized from the display every frame, in main.cpp) fails at the new one: the HDR10
+    // scanout format would already be set, but with nothing packing the frame for it.
+    HdrOut(gfx::HdrPresenter &presenter, const Display &display)
+        : presenter_(presenter), display_(display)
     {
     }
     ~HdrOut() override;
@@ -33,8 +39,7 @@ class HdrOut final : public viewer::HdrOutput
 
   private:
     gfx::HdrPresenter &presenter_;
-    int width_;
-    int height_;
+    const Display &display_;
     bool active_ = false;
 };
 

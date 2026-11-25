@@ -106,4 +106,32 @@ ffmpeg "${quiet[@]}" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=
     -af "volume=2.0,$(printf 'pan=%s' "$(ladder 5.1 'FL FR FC LFE BL BR')")" -c:a flac \
     "$out/flac-5.1-back-ladder.mkv"
 
+# Three chapters over the two-second clip, as a DVD/Blu-ray remux's would read (Chapter menu).
+cat >"$out/chapters.txt" <<'EOF'
+;FFMETADATA1
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=500
+title=Opening
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=500
+END=1200
+title=The Middle Part
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=1200
+END=2000
+title=Credits
+EOF
+ffmpeg "${quiet[@]}" -f lavfi -i "$video" -f lavfi -i "$(tone 440)" -i "$out/chapters.txt" \
+    -map_metadata 2 -map 0:v -map 1:a \
+    -c:v libx264 -preset veryfast -crf 36 -pix_fmt yuv420p -g 12 -sc_threshold 0 \
+    -c:a aac -b:a 48k -shortest "$out/chapters.mkv"
+rm -f "$out/chapters.txt"
+
 ls -l "$out"

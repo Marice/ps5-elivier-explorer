@@ -108,6 +108,13 @@ class Viewer
     }
     // True once the player asked to leave (Circle); the screen then calls close() and drops it.
     virtual bool closing() const = 0;
+    // Non-null when this viewer wants to be replaced by another file (the video viewer's "next
+    // episode"): the screen closes this one and opens the path instead, as if it had been opened
+    // from the Files screen. The pointer is only valid until the next call.
+    virtual const std::string *reopen_as() const
+    {
+        return nullptr;
+    }
     // Gives back what the viewer holds that is not freed by its destructor alone: a playing
     // stream, textures. Called once, before the viewer is destroyed.
     virtual void close()

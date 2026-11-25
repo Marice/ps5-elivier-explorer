@@ -28,7 +28,38 @@ bool digit(char c)
     return c >= '0' && c <= '9';
 }
 
-// Case-insensitive, with runs of digits compared as numbers: file2 before file10.
+std::string extension_of(const std::string &name)
+{
+    const std::size_t dot = name.rfind('.');
+    return dot == std::string::npos || dot == 0 ? std::string() : name.substr(dot + 1);
+}
+
+template <typename T> int three_way(T a, T b)
+{
+    return a < b ? -1 : (a > b ? 1 : 0);
+}
+
+std::string normalized(const std::string &path)
+{
+    std::string out = path;
+    while (out.size() > 1 && out.back() == '/')
+        out.pop_back();
+    return out.empty() ? std::string("/") : out;
+}
+
+// 0, or the errno a bad name earns.
+int check_name(const std::string &name)
+{
+    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos ||
+        name.find('\0') != std::string::npos)
+        return EINVAL;
+    if (name.size() > 255)
+        return ENAMETOOLONG;
+    return 0;
+}
+
+} // namespace
+
 int natural_compare(const std::string &a, const std::string &b)
 {
     std::size_t i = 0;
@@ -77,39 +108,7 @@ int natural_compare(const std::string &a, const std::string &b)
     return 0;
 }
 
-std::string extension_of(const std::string &name)
-{
-    const std::size_t dot = name.rfind('.');
-    return dot == std::string::npos || dot == 0 ? std::string() : name.substr(dot + 1);
-}
-
-template <typename T> int three_way(T a, T b)
-{
-    return a < b ? -1 : (a > b ? 1 : 0);
-}
-
-std::string normalized(const std::string &path)
-{
-    std::string out = path;
-    while (out.size() > 1 && out.back() == '/')
-        out.pop_back();
-    return out.empty() ? std::string("/") : out;
-}
-
-// 0, or the errno a bad name earns.
-int check_name(const std::string &name)
-{
-    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos ||
-        name.find('\0') != std::string::npos)
-        return EINVAL;
-    if (name.size() > 255)
-        return ENAMETOOLONG;
-    return 0;
-}
-
-} // namespace
-
-PaneModel::PaneModel(Source &source) : source_(source)
+PaneModel::PaneModel(Source &source) : source_(&source)
 {
 }
 
@@ -185,7 +184,7 @@ int PaneModel::index_of(std::string_view name) const
 
 bool PaneModel::list_into(const std::string &path, const std::string &focus_name, int fallback)
 {
-    ListResult listing = source_.list(path);
+    ListResult listing = source_->list(path);
     if (!listing.ok)
     {
         state_.list_error = listing.error;
@@ -195,8 +194,8 @@ bool PaneModel::list_into(const std::string &path, const std::string &focus_name
     state_.list_error = 0;
     const bool same_folder = state_.path == path;
     state_.path = path;
-    state_.space = source_.space(path);
-    state_.changeable = !is_protected_folder(path) && source_.is_plain_path(path);
+    state_.space = source_->space(path);
+    state_.changeable = !is_protected_folder(path) && source_->is_plain_path(path);
     state_.total_entries = static_cast<int>(listing.entries.size());
     sort_entries(&listing.entries);
     state_.truncated = listing.entries.size() > static_cast<std::size_t>(kPaneRowCap);
@@ -362,9 +361,9 @@ int PaneModel::make_folder(const std::string &name)
         return EPERM;
     const std::string path = join(state_.path, name);
     Entry existing;
-    if (source_.stat(path, &existing))
+    if (source_->stat(path, &existing))
         return EEXIST;
-    const int error = source_.make_directory(path);
+    const int error = source_->make_directory(path);
     trace("pane: new folder %s: %d", path.c_str(), error);
     if (error == 0)
         reload_focusing(name);
@@ -383,9 +382,9 @@ int PaneModel::rename_entry(const std::string &from, const std::string &to)
         return EPERM;
     const std::string target = join(state_.path, to);
     Entry existing;
-    if (source_.stat(target, &existing))
+    if (source_->stat(target, &existing))
         return EEXIST; // never over something that is there
-    const int error = source_.rename(join(state_.path, from), target);
+    const int error = source_->rename(join(state_.path, from), target);
     trace("pane: rename %s -> %s: %d", from.c_str(), to.c_str(), error);
     if (error == 0)
     {

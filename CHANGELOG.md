@@ -5,6 +5,36 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Films with a chapter list (a DVD/Blu-ray remux's, usually) show it under Options > Chapters,
+  with each title and timecode and the one playing now marked; choosing one seeks to it.
+- The next video in the same folder: when one ends and another follows (natural order, so
+  "Episode 2" comes before "Episode 10"), a panel counts down to it; Cross plays it at once,
+  Circle cancels and stays on the finished film.
+- ZIP and RAR archives (including old-style and new-style multi-volume splits) open as a
+  read-only folder: Cross on one browses its stored (uncompressed) contents, Back at its root
+  leaves it again. A file can be copied out onto a real drive; compressed entries list as
+  unreadable, since this project's GPL licence does not allow bundling a decompressor.
+- A copy or move shows its current transfer speed (KB/MB/GB per second, two decimals).
+- The sandboxed-folder message now also suggests OnionHEN alongside etaHEN and the Lapy JB
+  Daemon.
+
+### Changed
+
+- The console is asked to free the app from its sandbox up to four times instead of once,
+  matching known jailbreak-on-demand daemons' own documented retry behaviour.
+
+### Fixed
+
+- "Fill the screen" in the video viewer's Options menu now actually fills it; confirming it
+  (a checkable item) never reached the code that applied it.
+- The app refused to launch at all after being listed under the Media tab: its kernel page-table
+  sizes were left at a Game-category title's values, which the system does not allow for Media.
+- Copying or moving a file out of an open archive onto a real drive failed ("it is not there any
+  more"): the job always used the screen's own drive as both sides, never the archive a pane was
+  actually showing.
+
 ## [v00.002.001] - 2026-11-24
 
 ### Changed

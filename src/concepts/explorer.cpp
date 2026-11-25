@@ -15,6 +15,7 @@
 #include "concepts/explorer/row_format.hpp"
 #include "core/held_step.hpp"
 #include "core/tween.hpp"
+#include "explorer/archive_source.hpp"
 #include "explorer/copy_job.hpp"
 #include "explorer/guard.hpp"
 #include "explorer/local_source.hpp"
@@ -48,6 +49,7 @@ namespace
 using gfx::Color;
 using gfx::Rect;
 using namespace explorer;
+using hui::explorer::ArchiveSource;
 using hui::explorer::ConflictPolicy;
 using hui::explorer::CopyPlan;
 using hui::explorer::CopyProgress;
@@ -183,6 +185,32 @@ constexpr app::TourStep kTour[] = {
     {1.0f, 0, Direction::none, "files-video-subtitles"},
     {0.3f, action_bit(Action::north), Direction::none, nullptr},
     {0.5f, 0, Direction::none, "files-video-fullscreen"},
+    // The Options menu, over the full-screen film: open it, look at "Chapters" (this demo clip's
+    // own), back to the main menu, then check "Fill the screen" (the last item, after Start over,
+    // Chapters, Subtitle delay and Sound delay; a checkable item, so confirming it does not close
+    // the menu), then "Subtitle delay" to show the adjust panel.
+    {0.3f, action_bit(Action::menu), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-menu"},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-chapters"},
+    {0.3f, action_bit(Action::back), Direction::none, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.06f, 0, Direction::down, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.5f, 0, Direction::none, "files-video-fill"},
+    {0.06f, 0, Direction::up, nullptr},
+    {0.06f, 0, Direction::up, nullptr},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
+    {0.06f, 0, Direction::right, nullptr},
+    {0.06f, 0, Direction::right, nullptr},
+    {0.06f, 0, Direction::right, nullptr},
+    {0.06f, 0, Direction::right, nullptr},
+    {0.06f, 0, Direction::right, nullptr},
+    {0.5f, 0, Direction::none, "files-video-delay"},
+    {0.3f, action_bit(Action::confirm), Direction::none, nullptr},
     {0.3f, action_bit(Action::north), Direction::none, nullptr},
     {0.3f, action_bit(Action::back), Direction::none, nullptr},
     {0.5f, 0, Direction::none, nullptr},
@@ -236,6 +264,32 @@ const char *key_name(SortKey key)
         return "type";
     }
     return "";
+}
+
+// ".zip", ".rar" (plain or ".partNNN.rar"), ".zNN", ".rNN": whether Cross on this name should
+// open it as a folder (an archive) instead of asking the viewer registry for a handler. Matches
+// loosely on purpose (the exact volume-numbering rules live in archive_source.cpp); a name that
+// looks like a RAR/ZIP volume but turns out damaged still fails with a clear message from
+// ArchiveSource::open(), not a wrong handler silently taking the file instead.
+bool looks_like_archive(const std::string &name)
+{
+    std::string low = name;
+    for (char &c : low)
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    const auto ends_with = [&low](const std::string &suffix) {
+        return low.size() >= suffix.size() &&
+              low.compare(low.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    if (ends_with(".zip") || ends_with(".rar"))
+        return true;
+    // ".zNN" / ".rNN": exactly two digits after the dot.
+    const std::size_t dot = low.rfind('.');
+    if (dot != std::string::npos && low.size() - dot == 4 &&
+        (low[dot + 1] == 'z' || low[dot + 1] == 'r') &&
+        low[dot + 2] >= '0' && low[dot + 2] <= '9' && low[dot + 3] >= '0' && low[dot + 3] <= '9')
+        return true;
+    return false;
 }
 
 // What an errno means to the player.
@@ -403,6 +457,18 @@ class PaneView
             }
             else if (focused != nullptr && model.enter(focused->name))
                 refresh(true);
+            else if (focused != nullptr && focused->kind != EntryKind::directory &&
+                    looks_like_archive(focused->name))
+            {
+                std::string error;
+                if (enter_archive(PaneModel::join(state.path, focused->name), &error))
+                    feedback.play(audio::Cue::select);
+                else
+                {
+                    archive_error = error;
+                    feedback.play(audio::Cue::error);
+                }
+            }
             else if (focused != nullptr && focused->kind != EntryKind::directory)
                 open_request = focused->name; // a file: the screen picks its handler
             else if (focused != nullptr && focused->kind == EntryKind::directory)
@@ -410,7 +476,9 @@ class PaneView
         }
         else if (input.is_pressed(Action::back))
         {
-            if (model.go_up())
+            if (in_archive() && leave_archive())
+                feedback.play(audio::Cue::back);
+            else if (model.go_up())
                 refresh(true);
             else
                 feedback.play(audio::Cue::error);
@@ -496,6 +564,48 @@ class PaneView
 
     // The file a Cross press asked to open (the screen reads and clears it), else empty.
     std::string open_request;
+    // Set when enter_archive() just failed (the screen reads and clears it, toasts it), else
+    // empty.
+    std::string archive_error;
+
+    // True once this pane is inside an opened archive (one level: the archive itself never holds
+    // another one, per D77's block B scope). Back at the archive's own root restores outside_.
+    bool in_archive() const
+    {
+        return archive_ != nullptr;
+    }
+
+    // Cross on an entry that looks like a ZIP/RAR volume: opens it in place of the real source,
+    // remembering where to return to. False (with a toast through the caller) on a damaged or
+    // unrecognised archive; the pane is left exactly where it was.
+    bool enter_archive(const std::string &path, std::string *error)
+    {
+        auto opened = ArchiveSource::open(model.source(), path, error);
+        if (opened == nullptr)
+            return false;
+        outside_source_ = &model.source();
+        outside_path_ = model.state().path;
+        archive_ = std::move(opened);
+        model.set_source(*archive_);
+        model.go_to("/");
+        refresh(true);
+        return true;
+    }
+
+    // Back at an archive's root: returns the pane to the real source and folder it was showing
+    // before enter_archive(). Does nothing (and returns false) anywhere else; the caller's normal
+    // go_up() handles every other Back press.
+    bool leave_archive()
+    {
+        if (archive_ == nullptr || model.state().path != "/")
+            return false;
+        model.set_source(*outside_source_);
+        model.go_to(outside_path_);
+        archive_.reset();
+        outside_source_ = nullptr;
+        refresh(true);
+        return true;
+    }
 
     // Once a frame: how long the focused row has stayed focused, for the scrolling name.
     void tick(float dt, bool active)
@@ -524,6 +634,11 @@ class PaneView
     ui::Table table;
 
   private:
+    // Set only while in_archive(): where and what to return to on leave_archive().
+    std::unique_ptr<ArchiveSource> archive_;
+    hui::explorer::Source *outside_source_ = nullptr;
+    std::string outside_path_;
+
     void draw_name_cell(ui::Canvas &canvas, const Rect &cell, const ui::TableRow &row) const
     {
         const Entry *entry = model.entry_at(row.tag);
@@ -674,7 +789,9 @@ class ExplorerScreen final : public app::Concept
         {
             // A viewer has the pad and the screen to itself until it says it is done.
             viewer_->update(input, dt, feedback);
-            if (viewer_->closing())
+            if (const std::string *next = viewer_->reopen_as())
+                open_next_video(*next);
+            else if (viewer_->closing())
                 close_viewer();
             toasts_.update(dt, feedback);
             return;
@@ -737,6 +854,12 @@ class ExplorerScreen final : public app::Concept
                 const std::string name = pane.open_request;
                 pane.open_request.clear();
                 open_file(active, name, nullptr);
+            }
+            if (!pane.archive_error.empty())
+            {
+                toasts_.push(ui::StatusKind::danger, "Could not open that archive",
+                            pane.archive_error);
+                pane.archive_error.clear();
             }
             const ui::Event event = pane.move(input, feedback);
             // Past a table's edge: the focus crosses the split (or is refused where there is no
@@ -882,9 +1005,19 @@ class ExplorerScreen final : public app::Concept
         top.list.shadow(panel, look.radius_card, 24.0f, Color::rgb(0x000000, 0.25f));
         paint.surface(panel, look.radius_card, look.surface, look.outline, 1.0f);
         char line[200];
-        std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s", verb(snap_.kind, false),
-                      snap_.files_done, snap_.files_total, size_text(snap_.bytes_done).c_str(),
-                      size_text(snap_.bytes_total).c_str());
+        // Copy and move alone show a speed (remove has no transfer rate worth reading): only
+        // once a sample exists, so the line does not flash "0.00 B/s" the instant a job starts.
+        const bool show_speed = snap_.kind != JobKind::remove && snap_.state == JobState::running &&
+                                speed_bytes_per_second_ > 0.0;
+        if (show_speed)
+            std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s   %s",
+                          verb(snap_.kind, false), snap_.files_done, snap_.files_total,
+                          size_text(snap_.bytes_done).c_str(), size_text(snap_.bytes_total).c_str(),
+                          speed_text(speed_bytes_per_second_).c_str());
+        else
+            std::snprintf(line, sizeof(line), "%s %d of %d files   %s of %s",
+                          verb(snap_.kind, false), snap_.files_done, snap_.files_total,
+                          size_text(snap_.bytes_done).c_str(), size_text(snap_.bytes_total).c_str());
         const float width = kRight - kMargin - 350.0f;
         paint.body(ui::fit_body(paint, line, 20.0f, width), kMargin + 24.0f, kProgressTop + 34.0f,
                    20.0f, look.text);
@@ -1035,11 +1168,22 @@ class ExplorerScreen final : public app::Concept
         }
         if (entry == nullptr)
             return;
-        const std::string path = PaneModel::join(pane.model.state().path, name);
+        open_path(PaneModel::join(pane.model.state().path, name), *entry, handler);
+    }
+
+    // What open_file does, for a path the caller already has (not necessarily in a pane's own
+    // listing): the video viewer's "next episode" calls this with a sibling file it found itself.
+    // Leaves viewer_ null on any failure: safe whether it was already null (opening from a pane)
+    // or still held an already-closed viewer (open_next_video, below).
+    void open_path(const std::string &path, const Entry &entry,
+                   const hui::viewer::FileHandler *handler = nullptr)
+    {
+        const std::string name = path.substr(path.rfind('/') + 1);
         if (handler == nullptr)
-            handler = registry().best(probe_with_head(*entry, path));
+            handler = registry().best(probe_with_head(entry, path));
         if (handler == nullptr)
         {
+            viewer_.reset();
             toasts_.push(ui::StatusKind::info, "Nothing can open this yet", name);
             return;
         }
@@ -1055,7 +1199,7 @@ class ExplorerScreen final : public app::Concept
         hui::viewer::FileRef file;
         file.source = &source_;
         file.path = path;
-        file.entry = *entry;
+        file.entry = entry;
         viewer_ = handler->open(context, file);
         if (!viewer_)
         {
@@ -1064,6 +1208,29 @@ class ExplorerScreen final : public app::Concept
         }
         viewer_path_ = path;
         hui::explorer::trace("viewer: %s opens %s", handler->id(), path.c_str());
+    }
+
+    // The video viewer asked to be replaced by the next episode: close it the normal way (which
+    // writes its resume position first) and open the path it gave, exactly as if it had been
+    // opened from a pane. On any failure this ends with no viewer at all (open_path's doing), so
+    // the Files screen needs the same "lists slide back in" it gets from close_viewer().
+    // `path` is taken by value, not by reference: it points into the viewer this closes and
+    // replaces, so it must be copied out before that happens.
+    void open_next_video(std::string path)
+    {
+        hui::explorer::trace("viewer: next episode %s", path.c_str());
+        viewer_->close();
+        Entry entry;
+        if (source_.stat(path, &entry))
+            open_path(path, entry);
+        else
+        {
+            viewer_.reset();
+            toasts_.push(ui::StatusKind::danger, "Could not open it", path);
+        }
+        if (!viewer_)
+            for (PaneView &pane : panes_)
+                pane.table.enter();
     }
 
     void close_viewer()
@@ -1186,12 +1353,27 @@ class ExplorerScreen final : public app::Concept
         job_source_ = active;
         job_active_ = true;
         conflict_answered_ = false;
+        speed_sampled_at_ = clock_;
+        speed_sampled_bytes_ = 0;
+        speed_bytes_per_second_ = 0.0;
         bar_.set_value(0.0f, true);
         cancel_hold_.reset();
+        // Each pane's own current Source, not always the screen's LocalSource: a pane inside an
+        // open archive (D87) copies out of it (D90), not out of whatever is on local disk at the
+        // same path string. Safe to capture as plain pointers: the panes are locked to input
+        // (job_active_) for this job's whole lifetime, so neither pane's source can change under
+        // it (enter_archive()/leave_archive() both run only from PaneView::handle(), never called
+        // while a job is active).
+        hui::explorer::Source *from_source = &panes_[active].model.source();
+        hui::explorer::Source *to_source = &panes_[1 - active].model.source();
         worker_.queue(
-            [this, plan]
-            { hui::explorer::run_copy_job(source_, source_, plan, &job_.progress, &job_.mutex); });
+            [this, plan, from_source, to_source]
+            { hui::explorer::run_copy_job(*from_source, *to_source, plan, &job_.progress, &job_.mutex); });
     }
+
+    // How often the transfer rate is recomputed: a per-frame byte delta is too small and noisy to
+    // read, so it is only updated every kSpeedSampleSeconds, holding its last value in between.
+    static constexpr float kSpeedSampleSeconds = 0.25f;
 
     // Once a frame while a job runs: take its progress, ask about a conflict, notice the end.
     void poll_job(app::Feedback &feedback)
@@ -1199,6 +1381,26 @@ class ExplorerScreen final : public app::Concept
         {
             std::lock_guard<std::mutex> lock(job_.mutex);
             snap_ = job_.progress;
+        }
+        if (snap_.state == JobState::running)
+        {
+            const float elapsed = clock_ - speed_sampled_at_;
+            if (elapsed >= kSpeedSampleSeconds)
+            {
+                // bytes_done can step backward (copy_job.cpp subtracts an in-flight file's count
+                // when a cancel or a failure stops it mid-copy): treat that as no progress this
+                // sample, not a negative or wrapped rate.
+                const std::uint64_t gained = snap_.bytes_done >= speed_sampled_bytes_
+                                               ? snap_.bytes_done - speed_sampled_bytes_
+                                               : 0;
+                speed_bytes_per_second_ = static_cast<double>(gained) / elapsed;
+                speed_sampled_at_ = clock_;
+                speed_sampled_bytes_ = snap_.bytes_done;
+            }
+        }
+        else
+        {
+            speed_bytes_per_second_ = 0.0;
         }
         if (snap_.state == JobState::waiting_conflict)
         {
@@ -1304,6 +1506,11 @@ class ExplorerScreen final : public app::Concept
     int job_source_ = 0;
     bool conflict_answered_ = false;
     CopyProgress snap_; // the job's progress as of this frame: only the UI thread touches it
+    // Transfer rate, sampled every kSpeedSampleSeconds rather than every frame (a per-frame byte
+    // delta is too noisy to read): the clock_ and bytes_done last sampled, and the rate that gave.
+    float speed_sampled_at_ = 0.0f;
+    std::uint64_t speed_sampled_bytes_ = 0;
+    double speed_bytes_per_second_ = 0.0;
     JobShared job_;
     hui::explorer::JobWorker worker_; // last: joined first, before what its jobs use
 };

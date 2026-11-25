@@ -76,6 +76,34 @@ TEST(Demuxer, ListsTheStreamsOfAnMp4)
     EXPECT_EQ(audio->sample_rate, 48000);
 }
 
+TEST(Demuxer, ReadsChaptersInOrderWithTheirTitlesAndStartTimes)
+{
+    const auto bytes = read_all("chapters.mkv");
+    std::string error;
+    auto demuxer = open_fixture(bytes, &error);
+    ASSERT_TRUE(demuxer) << error;
+
+    const std::vector<Chapter> &chapters = demuxer->info().chapters;
+    ASSERT_EQ(chapters.size(), 3u);
+    EXPECT_NEAR(chapters[0].start, 0.0, 0.01);
+    EXPECT_EQ(chapters[0].title, "Opening");
+    EXPECT_NEAR(chapters[1].start, 0.5, 0.01);
+    EXPECT_EQ(chapters[1].title, "The Middle Part");
+    EXPECT_NEAR(chapters[2].start, 1.2, 0.01);
+    EXPECT_EQ(chapters[2].title, "Credits");
+    EXPECT_LT(chapters[0].start, chapters[1].start);
+    EXPECT_LT(chapters[1].start, chapters[2].start);
+}
+
+TEST(Demuxer, FilesWithoutChaptersHaveAnEmptyList)
+{
+    const auto bytes = read_all("h264-aac.mp4");
+    std::string error;
+    auto demuxer = open_fixture(bytes, &error);
+    ASSERT_TRUE(demuxer) << error;
+    EXPECT_TRUE(demuxer->info().chapters.empty());
+}
+
 TEST(Demuxer, ReadsTheHdrFlagsOfAnHevcMain10File)
 {
     const auto bytes = read_all("hevc-main10-hdr.mkv");

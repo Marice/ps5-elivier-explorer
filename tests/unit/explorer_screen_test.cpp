@@ -4,15 +4,19 @@
 #include "concept_fixture.hpp"
 
 #include "concepts/concepts.hpp"
+#include "explorer/guard.hpp"
 #include "viewer/handler.hpp"
 #include "viewer/viewer.hpp"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
+#include <thread>
 
 #ifndef HUI_SOURCE_DIR
 #define HUI_SOURCE_DIR "."
@@ -119,6 +123,7 @@ class ExplorerScreenTest : public ConceptFixture
         root_ = (fs::temp_directory_path() / "elivier-screen-test").string();
         fs::remove_all(root_);
         fs::create_directories(root_);
+        hui::explorer::change_policy().allow_also(root_);
         std::ofstream(root_ + "/a.fake") << "fake content";
         std::ofstream(root_ + "/b.txt") << "plain";
         std::ofstream(root_ + "/c.fake") << "another fake file";
@@ -137,6 +142,7 @@ class ExplorerScreenTest : public ConceptFixture
         screen_.reset();
         hui::concepts::set_explorer_registry(nullptr);
         hui::concepts::set_explorer_start("/", "/");
+        hui::explorer::change_policy().clear_extra();
         fs::remove_all(root_);
         ConceptFixture::TearDown();
     }
@@ -238,6 +244,34 @@ TEST_F(ExplorerScreenTest, CrossOnAZipEntersItAndBackAtItsRootLeavesIt)
     // like it succeeded inside the (by now gone) archive handle.
     send(*screen_, press(hui::Action::back));
     expect_drawable(*screen_);
+}
+
+TEST_F(ExplorerScreenTest, CopiesAFileOutOfAnOpenArchiveOntoTheOtherPane)
+{
+    send(*screen_, nav(hui::Direction::down), 0.0f); // b.txt
+    send(*screen_, nav(hui::Direction::down), 0.0f); // c.fake
+    send(*screen_, nav(hui::Direction::down), 0.0f); // d.zip
+    send(*screen_, press(hui::Action::confirm));     // enters it
+    expect_drawable(*screen_);
+
+    // Inside basic.zip, dirs-first sorting puts "folder" before "top.txt": one more step down.
+    send(*screen_, nav(hui::Direction::down), 0.0f); // top.txt
+    send(*screen_, press(hui::Action::north));       // mark it
+    send(*screen_, press(hui::Action::west), 0.0f);  // copy to the other pane (also root_ here)
+    // The worker thread runs the job off the main thread, in real wall-clock time; send() only
+    // advances simulated dt with no actual delay, so the loop needs a real sleep to give the OS a
+    // chance to schedule that thread at all.
+    for (int i = 0; i < 200 && !fs::exists(root_ + "/top.txt"); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        send(*screen_, idle(), 0.0f);
+    }
+
+    ASSERT_TRUE(fs::exists(root_ + "/top.txt"));
+    std::stringstream copied;
+    copied << std::ifstream(root_ + "/top.txt", std::ios::binary).rdbuf();
+    EXPECT_EQ(copied.str(), "top-level file\n");
+    expect_drawable(*screen_); // the screen survived the whole job, still the lists
 }
 
 TEST_F(ExplorerScreenTest, CrossOnADamagedArchiveToastsAndLeavesThePaneWhereItWas)

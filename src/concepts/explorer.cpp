@@ -1358,9 +1358,17 @@ class ExplorerScreen final : public app::Concept
         speed_bytes_per_second_ = 0.0;
         bar_.set_value(0.0f, true);
         cancel_hold_.reset();
+        // Each pane's own current Source, not always the screen's LocalSource: a pane inside an
+        // open archive (D87) copies out of it (D90), not out of whatever is on local disk at the
+        // same path string. Safe to capture as plain pointers: the panes are locked to input
+        // (job_active_) for this job's whole lifetime, so neither pane's source can change under
+        // it (enter_archive()/leave_archive() both run only from PaneView::handle(), never called
+        // while a job is active).
+        hui::explorer::Source *from_source = &panes_[active].model.source();
+        hui::explorer::Source *to_source = &panes_[1 - active].model.source();
         worker_.queue(
-            [this, plan]
-            { hui::explorer::run_copy_job(source_, source_, plan, &job_.progress, &job_.mutex); });
+            [this, plan, from_source, to_source]
+            { hui::explorer::run_copy_job(*from_source, *to_source, plan, &job_.progress, &job_.mutex); });
     }
 
     // How often the transfer rate is recomputed: a per-frame byte delta is too small and noisy to

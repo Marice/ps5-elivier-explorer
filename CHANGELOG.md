@@ -5,6 +5,8 @@ All notable changes to EliVier Explorer are recorded here. The format follows
 
 ## [Unreleased]
 
+## [v00.003.000] - 2026-11-25
+
 ### Added
 
 - Films with a chapter list (a DVD/Blu-ray remux's, usually) show it under Options > Chapters,

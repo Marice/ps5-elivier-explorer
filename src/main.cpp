@@ -299,7 +299,7 @@ int main()
         ps5::hw_video_bring_up();
     ps5::hen_prepare();
     explorer::trace("asking the HEN to free the app");
-    explorer::AccessReport access = ps5::hen_free(1, kInstallFolder);
+    explorer::AccessReport access = ps5::hen_free(4, kInstallFolder);
     sys::log("[EXPLORER] access %s in %d ms, uid %d to %d, /app0 %d",
              explorer::route_name(access.route), access.milliseconds, access.uid_before,
              access.uid_after, access.app_folder ? 1 : 0);

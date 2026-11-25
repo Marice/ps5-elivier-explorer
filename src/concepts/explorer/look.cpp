@@ -95,8 +95,8 @@ std::string size_text(std::uint64_t bytes)
 std::string pane_error_text(int list_error, bool sandboxed)
 {
     if (list_error != 0 && sandboxed)
-        return "Needs the console unsandboxed: run etaHEN, or launch the Lapy JB Daemon from the "
-               "Homebrew Launcher, then reopen this app.";
+        return "Needs the console unsandboxed: run etaHEN or OnionHEN, or launch the Lapy JB "
+               "Daemon from the Homebrew Launcher, then reopen this app.";
     char line[96];
     std::snprintf(line, sizeof(line), "Could not open that folder (error %d)", list_error);
     return line;

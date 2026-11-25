@@ -28,6 +28,7 @@ TEST(PaneErrorText, StillSandboxedExplainsWhatToDo)
 {
     const std::string message = pane_error_text(2, true);
     EXPECT_NE(message.find("etaHEN"), std::string::npos);
+    EXPECT_NE(message.find("OnionHEN"), std::string::npos);
     EXPECT_NE(message.find("Lapy"), std::string::npos);
     EXPECT_EQ(message.find("error 2"), std::string::npos); // the real cause, not the errno
 }

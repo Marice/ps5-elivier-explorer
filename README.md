@@ -36,9 +36,10 @@ there is not known. The screenshots below show made-up demo files.
 | | |
 | --- | --- |
 | **Two panes** | One per folder or drive: `/data`, your USB drives and the rest of the file system. Sort by name, size or date (**L2** / **R2**); **L1** / **R1** turn a page in a long folder. Names that do not fit scroll after a second. |
-| **Copy, move, delete** | Mark files with **Triangle**, copy with **Square**. Jobs run in the background with progress and can be cancelled by holding a button. A name that is already there is asked about (skip, overwrite, keep both). Big files are copied in chunks, so memory stays small. **Delete** needs a button held. |
+| **Copy, move, delete** | Mark files with **Triangle**, copy with **Square**. Jobs run in the background with progress, a transfer speed and can be cancelled by holding a button. A name that is already there is asked about (skip, overwrite, keep both). Big files are copied in chunks, so memory stays small. **Delete** needs a button held. |
 | **Rename, new folder** | In the **Options** menu, with the on-screen keyboard. |
-| **Safe by default** | Changes (delete, move, rename, copy into) are only allowed in `/data` and on USB and extended drives. Everywhere else, system folders included, is read-only: you can look and copy files *out*, nothing more. Symbolic links are never followed. |
+| **ZIP and RAR archives** | **Cross** on a `.zip` or `.rar` (including old-style and new-style multi-volume splits) opens it as a folder; **Circle** at its root leaves it again. Only stored (uncompressed) entries can be read — this project's GPL licence does not allow bundling a decompressor — a compressed entry is left out of the listing. A file can be copied out onto a real drive the same way as anywhere else. |
+| **Safe by default** | Changes (delete, move, rename, copy into) are only allowed in `/data` and on USB and extended drives. Everywhere else, system folders and archives included, is read-only: you can look and copy files *out*, nothing more. Symbolic links are never followed. |
 | **File icons** | A file that can be opened has a coloured icon; the others are grey. The hint under **Cross** says what it will do. |
 
 <p>
